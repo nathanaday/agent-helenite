@@ -201,7 +201,7 @@ const edgeIndicator = ViewPlugin.fromClass(
         event.preventDefault();
         if (this.target !== undefined) view.dispatch({ effects: EditorView.scrollIntoView(this.target, { y: 'center' }) });
       });
-      view.scrollDOM.addEventListener('scroll', this.measure, { passive: true });
+      view.scrollDOM.addEventListener('scroll', this.onScroll, { passive: true });
       this.measure();
     }
 
@@ -212,35 +212,41 @@ const edgeIndicator = ViewPlugin.fromClass(
     }
 
     destroy(): void {
-      this.view.scrollDOM.removeEventListener('scroll', this.measure);
+      this.view.scrollDOM.removeEventListener('scroll', this.onScroll);
       this.dom.remove();
     }
 
-    private readonly measure = (): void => {
-      this.view.requestMeasure({
-        key: this,
-        read: (view) => {
-          const scroller = view.scrollDOM.getBoundingClientRect();
-          for (const agent of agents(view)) {
-            const block = view.lineBlockAt(agent.head);
-            const top = view.documentTop + block.top;
-            const bottom = view.documentTop + block.bottom;
-            if (bottom < scroller.top + 8) return { agent, edge: 'top' as const };
-            if (top > scroller.bottom - 8) return { agent, edge: 'bottom' as const };
-          }
-          return undefined;
-        },
-        write: (found) => {
-          this.target = found?.agent.head;
-          this.dom.classList.toggle('is-shown', Boolean(found));
-          if (!found) return;
-          const { state } = found.agent;
-          this.dom.dataset.edge = found.edge;
-          this.dom.style.setProperty('--duet-agent', state.color);
-          this.dom.textContent = `${state.name} ${state.status ? `· ${state.status}` : 'is editing'} ${found.edge === 'top' ? '↑' : '↓'}`;
-        },
-      });
-    };
+    private measure(): void {
+      this.view.requestMeasure({ key: this, read: (view) => this.find(view), write: (found) => this.show(found) });
+    }
+
+    // A scroll reads and writes the pill directly. A requested measure would run CodeMirror's scroll-anchor
+    // correction, which holds the scroll in place while CodeMirror counts the editor as out of view.
+    private readonly onScroll = (): void => this.show(this.find(this.view));
+
+    private find(view: EditorView): { agent: Agent; edge: 'top' | 'bottom' } | undefined {
+      const working = agents(view);
+      if (!working.length) return undefined;
+      const scroller = view.scrollDOM.getBoundingClientRect();
+      for (const agent of working) {
+        const block = view.lineBlockAt(agent.head);
+        const top = view.documentTop + block.top;
+        const bottom = view.documentTop + block.bottom;
+        if (bottom < scroller.top + 8) return { agent, edge: 'top' };
+        if (top > scroller.bottom - 8) return { agent, edge: 'bottom' };
+      }
+      return undefined;
+    }
+
+    private show(found: { agent: Agent; edge: 'top' | 'bottom' } | undefined): void {
+      this.target = found?.agent.head;
+      this.dom.classList.toggle('is-shown', Boolean(found));
+      if (!found) return;
+      const { state } = found.agent;
+      this.dom.dataset.edge = found.edge;
+      this.dom.style.setProperty('--duet-agent', state.color);
+      this.dom.textContent = `${state.name} ${state.status ? `· ${state.status}` : 'is editing'} ${found.edge === 'top' ? '↑' : '↓'}`;
+    }
   },
 );
 
