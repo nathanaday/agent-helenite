@@ -1,27 +1,53 @@
 // Settings for a CommonJS bundle that runs inside Obsidian (Electron renderer with Node access).
-// The Claude Agent SDK is ESM and calls createRequire(import.meta.url), which is undefined in CommonJS.
-// The define and banner give it a file URL. Obsidian does not set __filename, hence the fallback.
+import { readFile } from 'node:fs/promises';
 import { builtinModules } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
-const EVENTS_SHIM = fileURLToPath(new URL('./shims/node-events.cjs', import.meta.url));
-const VALIDATOR_SHIM = fileURLToPath(new URL('./shims/mcp-validator.mjs', import.meta.url));
-
-/** Points the bundle's `events` imports at the shim. The shim itself gets the real module. */
-const electronEvents = {
-  name: 'electron-events',
+// The Claude Agent SDK expects Node's timers and AbortController, but in Obsidian's renderer the
+// globals are Chromium's. These fixes apply only to the SDK's own files:
+// - Chromium's setTimeout returns a number, and the SDK calls .unref() on the result when it stops
+//   a CLI process. Each SDK file gets Node's timers.
+// - Node's events.setMaxListeners rejects Chromium AbortSignals. Chromium signals have no listener
+//   limit, so the SDK gets a version that skips them.
+const claudeSdkInRenderer = {
+  name: 'claude-sdk-in-renderer',
   setup(build) {
-    build.onResolve({ filter: /^(node:)?events$/ }, (args) =>
-      args.importer === EVENTS_SHIM ? { path: 'node:events', external: true } : { path: EVENTS_SHIM },
-    );
+    build.onLoad({ filter: /[\\/]claude-agent-sdk[\\/].*\.mjs$/ }, async (args) => ({
+      loader: 'js',
+      contents: 'import { setTimeout, clearTimeout, setInterval, clearInterval } from "timers";\n' + (await readFile(args.path, 'utf8')).replace(/^#!.*\n/, ''),
+    }));
+    build.onResolve({ filter: /^(node:)?events$/ }, (args) => (args.importer.includes('claude-agent-sdk') ? { path: 'events', namespace: 'renderer-events' } : undefined));
+    build.onLoad({ filter: /.*/, namespace: 'renderer-events' }, () => ({
+      loader: 'js',
+      contents: `
+        import { setMaxListeners as nodeSetMaxListeners } from "events";
+        export * from "events";
+        export function setMaxListeners(n, ...targets) {
+          if (targets.length === 0) return nodeSetMaxListeners(n);
+          for (const target of targets) {
+            try {
+              nodeSetMaxListeners(n, target);
+            } catch (error) {
+              if (error.code !== "ERR_INVALID_ARG_TYPE") throw error;
+            }
+          }
+        }`,
+    }));
   },
 };
 
-/** Points the MCP SDK's validator at the shim, so the bundle holds no code that generates code. */
+// The MCP SDK validates JSON Schemas with ajv, which compiles each schema with `new Function`.
+// Obsidian's review rejects code that generates code, so the bundle uses the SDK's interpreting validator.
 const mcpValidator = {
   name: 'mcp-validator',
   setup(build) {
-    build.onResolve({ filter: /\/validation\/ajv-provider\.js$/ }, () => ({ path: VALIDATOR_SHIM }));
+    build.onResolve({ filter: /\/validation\/ajv-provider\.js$/ }, () => ({ path: 'mcp-validator', namespace: 'mcp-validator' }));
+    build.onLoad({ filter: /.*/, namespace: 'mcp-validator' }, () => ({
+      loader: 'js',
+      // The MCP SDK and the validator are dependencies of yami, so resolve from there.
+      resolveDir: fileURLToPath(new URL('../node_modules/yami/', import.meta.url)),
+      contents: `export { CfWorkerJsonSchemaValidator as AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";`,
+    }));
   },
 };
 
@@ -30,17 +56,9 @@ export const obsidianBundle = {
   format: 'cjs',
   platform: 'node',
   target: 'es2022',
-  external: [
-    'electron',
-    'obsidian',
-    '@codemirror/*',
-    '@lezer/*',
-    ...builtinModules,
-    ...builtinModules.map((name) => `node:${name}`),
-  ],
-  plugins: [electronEvents, mcpValidator],
-  define: { 'import.meta.url': '__importMetaUrl' },
-  banner: {
-    js: `var __importMetaUrl = require('node:url').pathToFileURL(typeof __filename === 'string' ? __filename : require('node:path').join(process.cwd(), 'main.js')).href;`,
-  },
+  external: ['electron', 'obsidian', '@codemirror/*', '@lezer/*', ...builtinModules, ...builtinModules.map((name) => `node:${name}`)],
+  plugins: [claudeSdkInRenderer, mcpValidator],
+  // The Agent SDK calls createRequire(import.meta.url) on load, and a CJS bundle has no import.meta.
+  // Any file URL works for the built-in modules that the SDK requires.
+  define: { 'import.meta.url': JSON.stringify('file:///') },
 };

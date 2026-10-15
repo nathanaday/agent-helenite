@@ -1,220 +1,60 @@
 # Design notes
 
-These notes record the decisions behind Duet and the harness behavior that the code depends on.
+These notes record the decisions behind Duet. The agent sessions, the shared documents, and the conversation notes come from [Yami](https://github.com/nathanaday/yami); its `design.md` records those decisions and the harness behavior that the code depends on.
 
-## The app starts the harness
+## What Duet is
 
-There are two ways for an app to talk to an agent:
+Duet is an Obsidian plugin built on `yami` and `yami-obsidian`:
 
-1. **Start the harness.** The app starts `claude` or `codex` as a child process and talks to it over stdin and stdout.
-2. **Attach to a running session.** A server inside a terminal session accepts connections from the app. Claude Code calls this "channels". Codex has a shared app-server daemon.
+- `yami/agent` starts and drives Claude Code and Codex sessions, with one event model for both.
+- `yami-obsidian` holds the shared documents (Yjs), the agent cursors, the conversation notes with their message box, and the approval prompts. `installCollab` gives one Obsidian window one collab hub, which every Yami plugin shares.
 
-Duet uses the first way:
+Duet adds what is its own:
 
-- The user starts the session from the app, so the app needs no connect-and-approve step.
-- Every tool approval comes to the app as a callback. In an attached session, approvals stay in the terminal unless the harness forwards them. Claude Code forwards them only through a preview feature.
-- There is one process and one pipe. The app does not need a server, a port, or discovery.
+- **Mentions.** The user writes `@claude` and a request on a line of a note. The agent replies in a callout under the line. It can change only that note, through Duet's note tools.
+- **Agent profiles.** The settings hold one profile for each tag: the harness, the program path, environment variables, the model, the effort, the approval setting, and the color. `plugin/src/agents.ts` turns a profile into a Yami agent and keeps it until the profile changes.
+- **The contribution ledger and the lens.** They record and show which text a Duet agent wrote.
+- **The API for other plugins.** `plugin.api` starts conversation notes.
 
-An attach transport can come later, behind the same `AgentSession` interface.
+Conversation notes carry `type: conversation`, as in every Yami plugin. New conversation notes go into the folder of the "Conversation folder" setting; the default is `conversations`.
 
-## One interface, one adapter for each harness
+## Mentions
 
-`AgentSession` (in `src/session.ts`) is the only API that a UI uses. It has `send`, `interrupt`, `close`, an event stream, and a permission callback. `BaseSession` owns the turn queue and event delivery. An adapter only starts a turn, interrupts it, and calls `turn.finish` when the harness ends the turn.
+### One conversation per note
 
-| | Claude Code | Codex |
-|---|---|---|
-| Protocol | Claude Agent SDK (`@anthropic-ai/claude-agent-sdk/core`). The SDK runs `claude` and talks stream-JSON to it. | `codex app-server`: JSON-RPC as newline-delimited JSON, without the `"jsonrpc"` field |
-| Session id | A UUID that the adapter makes and gives to the SDK as `sessionId` | The thread id that `thread/start` returns |
-| Approvals | `canUseTool` callback | Server requests: `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval` |
-| "Allow for session" | Returns the SDK's permission suggestions as `updatedPermissions` | `acceptForSession`, or a grant with scope `session` |
-| Default policy | `permissionMode: 'default'` | `approvalPolicy: 'on-request'`, `sandbox: 'workspace-write'` |
-
-The adapters show every approval prompt that the harness sends. Codex sends fewer prompts by default, because its sandbox lets commands write inside the working directory. Set `approvalPolicy: 'untrusted'` to get a prompt for each command.
-
-### A new approval mode applies at once
-
-`configure({ approval })` changes Claude Code's permission mode with `setPermissionMode`. Claude Code checks each tool call when the call starts, so the new mode applies to the calls that follow, also in the current turn. The call that waits for the user was checked under the old mode. When the new mode is `accept-edits` or `auto`, and that mode can approve the waiting call, the adapter aborts the request's `signal` and denies the call with a message that tells the agent to make it again. Claude Code then checks the call under the new mode. The agent repeats one tool call, and the user sees no prompt that the new mode would not show. Approving the waiting call directly would skip Claude Code's own checks, such as protected paths and the safety checks of auto mode.
-
-`auto` is Claude Code's auto mode: Claude Code decides which actions are safe and runs them without asking. Bypass mode is not offered, because Claude Code accepts it only when the session started with it.
-
-### Questions
-
-Claude Code's `AskUserQuestion` tool comes to `canUseTool` like other tools. The adapter sends it to `SessionOptions.onQuestion` and returns the answers as `updatedInput.answers`, keyed by question text. Without the answers, Claude Code tells the agent that the user did not answer. With no handler, or when the user skips, the adapter denies the call with a message that says so. The `tool-end` event of the call has `question → answer` lines as its output, so a transcript can record the exchange.
-
-## Turns run one at a time
-
-`send` puts the message in a queue. The next turn starts only after the current turn ends. This rule gives each `send` exactly one `TurnResult` and keeps event order simple. Both harnesses can accept a message during a turn (Claude Code merges it into the turn; Codex has `turn/steer`), but the merged result cannot be matched to one `send` call.
-
-A turn becomes active inside `send`, not later. So `interrupt()` directly after `send()` stops that turn.
-
-## Interrupt timing
-
-Both harnesses ignore an interrupt that arrives before the turn starts on their side:
-
-- Codex answers `turn/start` before it registers the turn. A `turn/interrupt` sent at that moment fails with "no active turn to interrupt". Codex sends `turn/started` a few milliseconds later.
-- Claude Code reads the user message from stdin a short time after the SDK writes it. An interrupt that arrives first finds nothing to stop, and the turn then runs to the end.
-
-Each adapter records whether the turn has started (`turn/started` for Codex; `system/init`, a stream event or an assistant message for Claude Code). An interrupt before that point waits until the turn starts. The fake Codex server in `test/fixtures` copies the Codex behavior, so a unit test covers this case.
-
-## What a UI receives
-
-Adapters normalize what they show, so every UI gets the same thing from both harnesses:
-
-- File paths inside the working directory are relative (`Ideas.md`, not `/private/var/.../Ideas.md`). Harnesses often report the resolved path, so the comparison also uses the resolved working directory.
-- Codex runs commands as `/bin/zsh -lc '<command>'`. Titles show the inner command. The permission detail keeps the full command.
-- The detail of a file-change request is a line diff: each line starts with ' ', '-' or '+'. Claude Code sends the old and new text of an edit, and the adapter computes the diff. Codex sends a unified diff.
-
-Both adapters also give:
-
-- `thinking-delta` and `thinking` events with the model's reasoning summary. Claude Code sends them when the setting `showThinkingSummaries` is on; the adapter turns it on. Codex sends reasoning summary deltas.
-- `detail` and `paths` on `tool-start`: the command or diff, and the files that the tool reads or changes.
-- `models()`, `commands()` and `configure({ model, effort, approval })`. Claude Code's commands are its slash commands and skills. Codex has no slash commands in the app server, so its commands are its skills: `send('/name request')` sends the skill as a `skill` input item.
-
-## Finding the harness binary
-
-An app that starts from the macOS Dock, such as Obsidian, gets only the system PATH (`/usr/bin:/bin:/usr/sbin:/sbin`). The harness binaries are not on that PATH. `codex` is also a Node script, so it needs `node` on the PATH.
-
-`harnessEnvironment` reads PATH from the user's login shell (`$SHELL -ilc`) and adds common install directories. `findExecutable` then looks for the binary on that PATH. The caller can skip the lookup with `executablePath`. Use `env` to choose an account, for example `CLAUDE_CONFIG_DIR`.
-
-## Bundling for Obsidian
-
-An Obsidian plugin is one CommonJS file. The Claude Agent SDK is ESM and calls `createRequire(import.meta.url)`, which is undefined in CommonJS. `scripts/bundle.mjs` replaces `import.meta.url` with a file URL that a banner line defines. Obsidian does not define `__filename`, so the banner has a fallback. The SDK uses this `require` only to find its own bundled binary, and Duet passes `pathToClaudeCodeExecutable`, so the exact path does not matter. The plugin build must use the same `define` and `banner` settings.
-
-The plugin bundle is about 2 MB and is not minified, so reviewers can read it. The Claude Agent SDK and zod make up most of it.
-
-The MCP SDK, which the Claude Agent SDK uses for in-process tools, validates JSON Schemas with ajv by default. ajv compiles each schema to JavaScript with `new Function`, and Obsidian's review flags code that generates code. The plugin build points the MCP SDK's ajv validator at `scripts/shims/mcp-validator.mjs`, which exports the SDK's own `CfWorkerJsonSchemaValidator`. That validator interprets schemas. The library package keeps the default, because only the plugin is reviewed.
-
-Obsidian plugins that start processes work only on desktop. The plugin manifest must set `isDesktopOnly: true`.
-
-## Claude Code loads the user's setup
-
-A session starts Claude Code with the user's settings, plugins and MCP servers, as `claude` does in a terminal. Claude may then mention, for example, connectors that need a sign-in. `sdkOptions` passes any Agent SDK option through. `{ strictMcpConfig: true }` loads only the MCP servers that the caller passes. The plugin uses it unless the agent's setting "Load my MCP servers and plugins" is on.
-
-## The library as a package
-
-The library in `src/` is the base layer. The Obsidian plugin bundles it from source. Other apps use the package build: `npm run build:lib` writes ES modules and type declarations to `lib/`, and `package.json` exports them. The `prepare` script runs the build, so a git dependency installs a built package. The browser demo at [duet-demo](https://github.com/nathanaday/duet-demo) uses the library this way.
-
-`src/cli/` is a development tool. It is not part of the package.
-
-## The Obsidian plugin
-
-The plugin has two ways to work with an agent:
-
-- **Mentions.** The user writes `@claude` and a request on a line of a note. The agent replies in a callout under the line. It can change only that note.
-- **Conversation notes.** A note with the property `duet: conversation` is a chat. A message box at the bottom of the note sends messages. The plugin writes the messages, the agent's replies, and its tool calls into the note. When the conversation ends, the note stays as a record.
-
-In both modes, every change that an agent makes to an open note appears with the agent's cursor.
-
-### Shared documents (Yjs)
-
-While an agent works with a note, the note is a shared document: a Yjs `Y.Doc` with one `Y.Text`, in `plugin/src/collab/`. The user and each agent are peers of this document. They exchange Yjs updates in memory; there is no network.
-
-- `SharedNote` owns the document. It is created from the file on disk and the text in the editor, so unsaved typing is part of it.
-- `EditorBinding` is a CodeMirror view plugin. It applies each user transaction to the `Y.Text`, and applies each document change to the editor. It ignores sub-editors, such as table cells and embeds, because they write their text back into the note themselves.
-- `AgentPeer` is one agent in one note. Its changes use the peer as the Yjs transaction origin.
-- `CollabHub` creates and disposes shared notes and connects them to editors.
-
-Changes from the document reach the editor with three settings:
-
-- `addToHistory: false`, so Cmd+Z undoes only the user's own typing.
-- `remote: true`.
-- `filter: false`. Live Preview has transaction filters that change edits near the frontmatter. A filtered change makes the editor and the document differ.
-
-The command "Undo the agent's last changes in this note" uses a `Y.UndoManager` that tracks only agent origins. Each turn is one undo step. Reply text is written with a separate origin, so the command does not remove replies.
-
-### How agent edits merge
-
-An agent edits a version of the note that can be older than the editor text. The plugin applies the edit to that version and lets Yjs merge it:
-
-1. The plugin takes a Yjs snapshot of the version that the agent read. The document has `gc: false`, so old versions stay available.
-2. It forks the document at that snapshot (`Y.createDocFromSnapshot`).
-3. It computes the agent's change as diff-match-patch ops against the old text, and applies them to the fork. Each fork update is applied to the shared document.
-
-Text that the user typed after the agent read the note stays where it is. This includes text inside a range that the agent rewrites.
-
-Agents change notes in two ways:
-
-- **Note tools** (mentions). The tools `read_note`, `edit_note` and `write_note` run inside the plugin. Claude Code gets them as an in-process MCP server; Codex gets them as dynamic tools. The version that the agent read is the snapshot from the last `read_note`, or from the message that contained the note.
-- **The agent's own file tools** (conversations). Claude Code's Edit and Codex's `apply_patch` write the file on disk. The version that the agent read is the last version on disk. The hub records each save that Obsidian makes (it wraps `Vault.modify`), so it knows which document state matches the disk. When the file changes to anything else, the note forks at that state and merges the change. The change is shown as the agent's when a running tool names the file, or when exactly one agent works with its own file tools.
-
-While an agent works with its own file tools, every note open in an editor is shared, so these changes merge with unsaved typing.
-
-Obsidian reloads an open note when its file changes on disk (`loadFileInternal`, then `setViewData(data, false)`). For a shared note, the hub skips this call and merges the change itself. A reload that kept Obsidian's own result would lose either the user's unsaved typing or the agent's change.
-
-### Cursors and highlights
-
-Each agent publishes its presence with the Yjs awareness protocol: name, color, a status such as "Reading Ideas.md", and a cursor as relative positions. The agent peer has its own `Awareness` instance and sends its updates to the note, as a remote client does.
-
-- The cursor is drawn in a CodeMirror layer. The marker reuses its element, so a CSS transition moves it smoothly.
-- In Live Preview, some Markdown, such as a callout, is a rendered widget. CodeMirror places a position inside a widget at its edge, so the cursor goes after the last rendered text in the widget. The binding redraws cursors when the editor DOM changes, because Obsidian renders widgets after the text changes.
-- Text that an agent edits is highlighted in the agent's color for about one second, then the highlight fades.
-- When the agent works outside the visible part of the editor, a pill at the top or bottom edge shows where. A click scrolls there.
-
-Agent edits play as typing only when an editor shows the note and the setting "Show agents typing" is on. One edit takes at most about 1.3 seconds. The tool call returns after the edit is in the note.
-
-### Writing a reply
-
-`LiveRegion` is a range of a shared note that the agent writes as its own output, such as a reply callout. Its start is anchored to the character before the range and its end to the character after it. The caller sets the text that the range should hold. Appended text is typed a few characters at a time, and other changes apply as small diffs. If the user deletes a reply callout, the region stops writing.
-
-A reply callout is rendered so that streamed text only appends. While the agent works, the agent's cursor shows its status; the callout does not.
-
-In a mention, the agent sees the note with the request line and its reply callout replaced by the line `⟦request and reply⟧`. Edits that overlap this line are cut around it, so the agent cannot change the request or its own reply.
-
-### Conversation notes
-
-A conversation note has this frontmatter:
-
-```yaml
-duet: conversation
-agent: claude          # the profile name
-model: opus            # optional
-effort: high           # optional
-approval: plan         # optional; otherwise the profile's setting
-session: <id>          # the harness session, for resuming
-status: active         # or ended
-created: 2026-10-05 14:02
-user-setup: true       # optional; loads the user's MCP servers and plugins
-cssclasses:
-  - duet-conversation
-```
-
-The body is Markdown:
-
-- A user message is a `> [!user]` callout.
-- Thinking and tool calls between pieces of text go into one collapsed `> [!activity]-` callout. Its title is a summary, for example "Thought for 6s · Read 2 files". Command output and diffs are inside it.
-- The agent's text is plain Markdown.
-
-The message box is a DOM element in the note view, not part of the note. It sends messages, suggests slash commands after `/` and notes after `[[`, shows approval requests and the agent's questions, and changes the model, effort and approval mode. A request shows in the message box when one is open, otherwise in a dialog. A message sent during a turn waits until the turn ends. Before a turn, the plugin adds one line break at the end of the note and writes the turn before it, so text that the user types at the very end stays outside the turn.
-
-The plugin names a new conversation after its first message, before it sends the message. The first message of each agent process ends with the line `Conversation note: <path> (do not edit it)`, and so does the next message after a rename. The instructions say that the agent can change every other file with its own tools. It keeps the agent process while a view shows the note; an idle process closes after the idle time, and the next message resumes the session from `session`.
-
-### API for other plugins
-
-Duet is the one plugin that puts agents in the editor. A second plugin with its own Yjs hub would bind the same editors and wrap `Vault.modify` again. So a plugin such as Atlas starts a Duet conversation through `plugin.api` instead of running its own agents. `plugin/src/api.ts` holds the types and imports nothing, so another plugin can copy it.
-
-The API uses the code path of the New conversation command: `ConversationManager.start` calls `create` and then `send` on the note's controller. Some details:
-
-- **The path is final at once.** The API names the note when it creates it, from `title` or from the message, so the first message does not rename it. The controller renames only notes with the placeholder name `New conversation <date> <time>`.
-- **The agent is known before the first message.** `create` waits until the metadata cache reads the new note, because the controller reads its agent from the note's properties.
-- **Status without a race.** `send` decides synchronously whether a message is a Duet command, so the conversation is `working` when `newConversation` resolves. When a turn ends with a message in the queue, the next turn starts before the listeners run, so a listener sees `working`.
-- **Listeners follow the note.** `onTurnEnd` keeps listeners by `TFile`, so a rename keeps them. An error in a listener goes to the console and does not stop the turn.
-- **User setup per conversation.** `loadUserSetup` writes `user-setup: true` into the note. Each agent process of the note then starts as if the agent's setting "Load my MCP servers and plugins" were on, also after the idle close.
-
-### One conversation per note (mentions)
-
-Each note and agent pair has one session. The session ids are saved with the plugin settings, keyed by note path, and follow renames. A session that is idle for 15 minutes closes its process. The next mention resumes the conversation from the saved id.
+Each note and agent pair has one session. The session ids are saved with the plugin settings, keyed by note path, and follow renames. A session that is idle for 15 minutes closes its process. The next mention resumes the conversation from the saved id. When the harness no longer has the conversation, Duet starts a new one.
 
 Events reach the right reply through a queue: each mention adds a reply to its session's queue, and each `turn-start` takes the next one.
 
+### Note tools
+
+A mention session runs with `access: 'read-only'` and Duet's note tools `read_note`, `edit_note` and `write_note`, which run inside the plugin. The agent can read and search the vault, and can change only the note that it was asked in.
+
+Edits apply against the version of the note that the agent last read: the Yjs snapshot from the last `read_note`, or from the message that contained the note. Yami merges the edit into the current text, so what the user typed in the meantime stays.
+
+The agent sees the note with the request line and its reply callout replaced by the line `⟦request and reply⟧`. Edits that overlap this line are cut around it, so the agent cannot change the request or its own reply.
+
+### Writing a reply
+
+The reply is a `LiveRegion` of the shared note, so it streams into the callout while the user keeps typing around it. The callout is rendered so that streamed text only appends. While the agent works, the agent's cursor shows its status; the callout does not.
+
 ### Turns the user did not ask for
 
-Claude Code can run a command in the background and end its turn at once. When the command finishes, Claude Code starts a new turn by itself. A note has no place for that reply, so the plugin sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` for Claude sessions, and the instructions ask both agents to wait for commands. A turn that starts without a mention still gets a "(follow-up)" callout at the end of the note. In a conversation note, it gets a turn at the end of the note.
+Claude Code can run a command in the background and end its turn at once. When the command finishes, Claude Code starts a new turn by itself. A note has no place for that reply, so Duet sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` for Claude sessions, and the instructions ask both agents to wait for commands. A turn that starts without a mention still gets a "(follow-up)" callout at the end of the note.
 
 ### Agent tags
 
 An editor extension shows each `@name` tag of a configured agent as a pill in the agent's color, like a `#tag`. It uses the same rules as the Enter trigger: `findTags` in `mention.ts` finds the tags, and tags in code, frontmatter, math, blockquotes and email addresses stay plain. The pill shows as soon as the name is complete, before the request, so the user sees that the tag will work. A Reading view post-processor wraps tags in the same pill.
 
-### Contribution ledger
+## API for other plugins
+
+A plugin such as Atlas starts a Duet conversation through `plugin.api` instead of running its own agents. `plugin/src/api.ts` holds the types and imports nothing, so another plugin can copy it. The `profile` option names a Duet agent by its tag, in any letter case; Duet passes the registered agent to `ConversationManager.start` of `yami-obsidian`, which creates the note and sends the first message.
+
+- **The path is final at once.** The note is named when it is created, from `title` or from the message, so the first message does not rename it.
+- **Status without a race.** The conversation is `working` when `newConversation` resolves. When a turn ends with a message in the queue, the next turn starts before the listeners run, so a listener sees `working`.
+- **Listeners follow the note.** `onTurnEnd` keeps listeners by `TFile`, so a rename keeps them. An error in a listener goes to the console and does not stop the turn.
+
+## Contribution ledger
 
 The ledger records which text of each note a Duet agent wrote. The contribution lens shows it.
 
@@ -228,21 +68,25 @@ The ledger records which text of each note a Duet agent wrote. The contribution 
 
 **Exact while shared.** While a note is shared, the ledger follows each Yjs change of the note as it happens, in order, so no comparison is needed. The lens of an editor that shows a shared note maps the spans to the editor's text for display only. Only the shared note changes the record.
 
-**Edits to closed notes in conversations.** In a conversation the agent edits files with its own tools. A change merges as the agent's edit only when the note is shared before the change. `SessionOptions.beforeFileChange` runs before a file-editing tool. The conversation shares the named notes there, and the hub releases them when the turn ends. Claude Code runs it as a `PreToolUse` hook and waits for it. Codex waits only when it asks for approval; with the sandbox approval setting, it can apply a change before the note is shared, and that change is not attributed. A shell command that writes a file has no hook. A note that a conversation agent creates with its own tools is the agent's from the start.
+**Edits to closed notes in conversations.** In a conversation the agent edits files with its own tools. A change merges as the agent's edit only when the note is shared before the change. Yami's `beforeFileChange` runs before a file-editing tool; the conversation shares the named notes there, and the hub releases them when the turn ends. Claude Code runs it as a `PreToolUse` hook and waits for it. Codex waits only when it asks for approval; with the sandbox approval setting, it can apply a change before the note is shared, and that change is not attributed. A shell command that writes a file has no hook. A note that a conversation agent creates with its own tools is the agent's from the start.
 
 **Storage.** One JSON file for each note at `.duet/contributions/<note path>.json`: `{ version, text, spans: [{ from, to, agent, time }] }`. The folder is hidden in Obsidian and moves with the vault in file-based sync. Obsidian Sync does not sync hidden folders. The files follow renames and deletes. A file with no spans left is removed. Saves wait one second after the last change.
 
 **The lens.** In the editor, agent text has a mark with a tooltip that names the agent and the date. Live Preview renders some blocks, such as callouts and tables, as widgets, and a mark inside a widget does not show. A widget that holds agent text gets a bar on its left edge instead. Reading view has no source positions in its rendered text, so it marks whole sections.
 
-### Settings
+## Settings
 
 The settings tab uses the declarative settings API of Obsidian 1.13, so each setting shows in the settings search. Each agent is a group on the main page, with its tag as the heading and a remove button. Pages would hide the remove action: a list of pages has no visible delete button, and Obsidian finds an open page by its name, so renaming an agent while its page is open would empty the page. A tag change refreshes the tab when the field loses focus, because a refresh takes the focus from the field.
 
-### Node's events module in Electron
+"Load my MCP servers and plugins" sets the Claude agent's `settingSources`: with it, Claude Code reads the user's settings, and with it off, only the project's.
 
-In Obsidian's renderer, `AbortController` is the browser's. The Claude Agent SDK calls `events.setMaxListeners(n, signal)`, and Node rejects a browser `AbortSignal`. The bundle maps `events` to `scripts/shims/node-events.cjs`, which forwards everything to Node's module except that `setMaxListeners` skips browser event targets. The plugin does not patch the global module, so other plugins are not affected.
+## Bundling
 
-### Testing in a separate Obsidian
+`scripts/esbuild-options.mjs` bundles the plugin as CommonJS for Obsidian's renderer with the same fixes as the Yami plugin: Node's timers and a tolerant `events.setMaxListeners` for the Claude Agent SDK, and the interpreting JSON Schema validator for the MCP SDK, because Obsidian's review rejects code that generates code. `scripts/plugin.mjs` writes `styles.css` as Duet's own styles followed by `yami-obsidian/styles.css`.
+
+The unit tests in `test/unit/plugin/` are type-checked with `plugin/tsconfig.json`. Duet's `obsidian` and CodeMirror type packages must be the versions that `yami-obsidian` uses, or TypeScript sees two sets of nominal types.
+
+## Testing in a separate Obsidian
 
 `test/obsidian/harness.ts` starts Obsidian with `--user-data-dir` set to a temporary profile and `--remote-debugging-port`, so it runs beside the user's own Obsidian and does not share its settings or vaults. Playwright connects over the Chrome DevTools Protocol and types into the editor as a user does. The harness enables the plugin once with `enablePluginAndSave`. If the plugin is also listed in `community-plugins.json`, turning on community plugins loads a second instance. After each test, the suite checks that every open shared note has the same text in the editor and in the document.
 
@@ -250,24 +94,6 @@ A new profile has no app update, so Obsidian would run the version that its inst
 
 On macOS, Obsidian shows menus as native menus by default. Screenshots do not include them.
 
-The unit tests in `test/unit/plugin/` are type-checked with `plugin/tsconfig.json`. Under the root configuration, Node's module resolution loads the CodeMirror types twice, once for Obsidian's CommonJS types and once for the plugin's ES modules, and the two copies do not match.
-
 ## Licensing and accounts
 
 Duet does not include either harness. It runs the binary that the user installed, with the user's own login. The Claude Agent SDK package is not open source ("All rights reserved", under Anthropic's commercial terms). The plugin bundles the SDK's JavaScript but not its native binary. Anthropic's terms do not let a third-party product offer claude.ai subscription login unless Anthropic approves it. Read the current terms before you publish the plugin.
-
-## App tools
-
-`SessionOptions.tools` gives the agent tools that run inside the app. A tool has a name, a description, a zod input shape and a `run` function. The agent calls them without approval.
-
-- Claude Code: the adapter creates an in-process MCP server (`createSdkMcpServer`). The tool names are `mcp__<set>__<tool>`. `canUseTool` allows them.
-- Codex: the adapter sends them as `dynamicTools` in `thread/start` and answers `item/tool/call` requests. Dynamic tools are part of the experimental API, so the adapter sets `experimentalApi` in `initialize` when the session has tools.
-
-`access: 'read-only'` limits Claude Code to Read, Glob, Grep, WebSearch and WebFetch, and runs Codex with the `read-only` sandbox and approval policy `never`. Mentions use it with the note tools.
-
-## Things the adapters do not support yet
-
-- Claude Code's `ExitPlanMode` tool comes through the permission callback as an ordinary tool request. When the user approves it, Claude Code leaves plan mode, but the app's approval setting still says `plan`.
-- Codex `item/tool/requestUserInput` gets an error response. MCP elicitations get `decline`.
-- Images and file attachments in user messages.
-- Subagent activity. The Claude adapter ignores messages that belong to a subagent.

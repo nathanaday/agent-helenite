@@ -1,15 +1,11 @@
-import { type App, Notice, type TFile } from 'obsidian';
+import { Notice, type TFile } from 'obsidian';
 import type * as Y from 'yjs';
-import type { AgentEvent, AgentSession } from '../../src/index.ts';
-import { activity, Presence, startAgent } from './agent-session.ts';
+import type { AgentEvent, AgentSession } from 'yami/agent';
+import { activity, type CollabHub, EditorBinding, LiveRegion, type PermissionPrompts, Presence, type SharedNote } from 'yami-obsidian';
+import { type ProfileAgents, startSession } from './agents.ts';
 import { calloutHeader, isCalloutHeader, renderCallout, type ReplyState } from './callout.ts';
-import { EditorBinding } from './collab/binding.ts';
-import type { CollabHub } from './collab/hub.ts';
-import { LiveRegion } from './collab/region.ts';
-import type { SharedNote } from './collab/shared-note.ts';
 import type { TriggeredMention } from './enter-trigger.ts';
 import { NoteTools, PLACEHOLDER } from './note-tools.ts';
-import type { PermissionPrompts } from './permission-modal.ts';
 import { type AgentProfile, displayName } from './settings.ts';
 
 const INSTRUCTIONS = `You are running inside Obsidian, the note-taking app, through the Duet plugin. Your working directory is the root of the user's vault.
@@ -77,8 +73,8 @@ export class MentionAgents {
   private readonly settled = new Map<string, LiveSession>();
 
   constructor(
-    private readonly app: App,
     private readonly hub: CollabHub,
+    private readonly agents: ProfileAgents,
     private readonly sessions: SessionIndex,
     private readonly prompts: PermissionPrompts,
     private readonly options: {
@@ -91,7 +87,7 @@ export class MentionAgents {
 
   /** Agents that are working now, with their notes. */
   get working(): { name: string; file: TFile }[] {
-    return [...this.settled.values()].filter((live) => live.busy).map((live) => ({ name: displayName(live.profile), file: live.file }));
+    return [...this.settled.values()].filter((live) => live.busy).map((live) => ({ name: live.profile.name, file: live.file }));
   }
 
   async ask(mention: Mention): Promise<void> {
@@ -221,20 +217,19 @@ export class MentionAgents {
   }
 
   private async start(file: TFile, profile: AgentProfile, key: string): Promise<LiveSession> {
-    const presence = new Presence(profile, this.options.animate);
+    const presence = new Presence({ name: profile.name, color: profile.color }, this.options.animate);
     let current: () => Reply | undefined = () => undefined;
     const tools: NoteTools = new NoteTools({
       note: () => this.hub.acquire(file, tools),
       peer: (note) => presence.peer(note),
       hidden: (note) => hiddenRange(note, current()),
     });
-    const session = await startAgent(this.app, {
-      profile,
+    const session = await startSession(this.agents.agent(profile), {
       instructions: INSTRUCTIONS,
       access: 'read-only',
       resume: this.sessions[file.path]?.[profile.name],
       tools: tools.tools,
-      onPermission: (request) => this.prompts.ask(request, { agent: displayName(profile), notePath: file.path }),
+      onPermission: (request) => this.prompts.ask(request, { agent: profile.name, notePath: file.path }),
     });
     (this.sessions[file.path] ??= {})[profile.name] = session.id;
     await this.options.save();

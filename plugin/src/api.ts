@@ -25,8 +25,6 @@ export interface NewConversationOptions {
   folder?: string;
   /** Opens the note in a new tab. Default: true. */
   open?: boolean;
-  /** Claude Code only: starts the agent with the user's MCP servers and plugins, also when the agent's setting is off. */
-  loadUserSetup?: boolean;
 }
 
 /**
@@ -41,5 +39,7 @@ export interface TurnEnd {
   /** The path of the note now. The user can rename the note. */
   path: string;
   status: 'completed' | 'interrupted' | 'failed';
+  /** The agent's final message for the turn. */
+  text?: string;
   error?: string;
 }

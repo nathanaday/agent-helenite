@@ -1,16 +1,13 @@
 import type { EditorView } from '@codemirror/view';
 import { MarkdownView, Notice, Plugin, TFile } from 'obsidian';
+import { type CollabHub, ConversationManager, installCollab, PermissionPrompts, uninstallCollab } from 'yami-obsidian';
+import { ProfileAgents } from './agents.ts';
 import type { DuetApi } from './api.ts';
-import { bindingPlugin } from './collab/binding.ts';
-import { CollabHub } from './collab/hub.ts';
-import { presenceExtensions } from './collab/presence.ts';
 import { ContributionLedger } from './contributions/ledger.ts';
 import { ContributionLens } from './contributions/lens.ts';
-import { ConversationManager } from './conversation/manager.ts';
 import { enterTrigger } from './enter-trigger.ts';
 import { mentionTags, tagPostProcessor, type TagStyle } from './mention-tags.ts';
 import { MentionAgents, type SessionIndex } from './mentions.ts';
-import { PermissionPrompts } from './permission-modal.ts';
 import { displayName, type DuetSettings, DuetSettingTab, profileNamed, upgradeSettings } from './settings.ts';
 
 interface PluginData {
@@ -21,6 +18,7 @@ interface PluginData {
 export default class DuetPlugin extends Plugin {
   declare settings: DuetSettings;
   hub!: CollabHub;
+  agents!: ProfileAgents;
   mentions!: MentionAgents;
   conversations!: ConversationManager;
   ledger!: ContributionLedger;
@@ -37,8 +35,8 @@ export default class DuetPlugin extends Plugin {
     this.sessions = data.sessions ?? {};
 
     const animate = () => this.settings.animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    this.hub = new CollabHub(this.app);
-    this.hub.install(this, [bindingPlugin, presenceExtensions]);
+    this.hub = installCollab(this.app, this);
+    this.agents = new ProfileAgents(this.app, () => this.settings.profiles);
 
     this.ledger = new ContributionLedger(this.app);
     this.ledger.install(this);
@@ -51,7 +49,7 @@ export default class DuetPlugin extends Plugin {
 
     const prompts = new PermissionPrompts(this.app);
     this.conversations = new ConversationManager(this.app, this.hub, prompts, {
-      profiles: () => this.settings.profiles,
+      agents: () => this.agents.list,
       folder: () => this.settings.conversationFolder,
       animate,
       idleMinutes: () => this.settings.idleMinutes,
@@ -60,12 +58,18 @@ export default class DuetPlugin extends Plugin {
     this.conversations.install(this);
     this.api = {
       version: 1,
-      newConversation: async (options) => ({ path: (await this.conversations.start(options)).path }),
+      newConversation: async ({ profile, ...options }) => {
+        const agent = profile === undefined ? undefined : profileNamed(this.settings.profiles, profile);
+        if (profile !== undefined && !agent) {
+          throw new Error(`Duet has no agent named ${profile}. Agents: ${this.settings.profiles.map((p) => p.name).join(', ')}.`);
+        }
+        return { path: (await this.conversations.start({ ...options, agent: agent?.name })).path };
+      },
       conversationStatus: (path) => this.conversations.status(path),
       onTurnEnd: (path, callback) => this.conversations.onTurnEnd(path, callback),
     };
 
-    this.mentions = new MentionAgents(this.app, this.hub, this.sessions, prompts, {
+    this.mentions = new MentionAgents(this.hub, this.agents, this.sessions, prompts, {
       idleMinutes: () => this.settings.idleMinutes,
       animate,
       save: () => this.persist(),
@@ -79,7 +83,7 @@ export default class DuetPlugin extends Plugin {
       if (working) void this.app.workspace.getLeaf(false).openFile(working.file);
     });
 
-    this.addRibbonIcon('message-square-plus', 'New conversation', () => void this.conversations.create(this.settings.profiles[0]!));
+    this.addRibbonIcon('message-square-plus', 'New conversation', () => void this.newConversation());
     this.lensButton = this.addRibbonIcon('highlighter', 'Toggle contribution lens', () => void this.toggleLens());
     this.lensButton.addClass('duet-lens-toggle');
     this.lensButton.toggleClass('is-active', this.settings.lens);
@@ -91,13 +95,13 @@ export default class DuetPlugin extends Plugin {
     this.addCommand({
       id: 'new-chat',
       name: 'New conversation',
-      callback: () => void this.conversations.create(this.settings.profiles[0]!),
+      callback: () => void this.newConversation(),
     });
     for (const profile of this.settings.profiles.slice(1)) {
       this.addCommand({
         id: `new-chat-${profile.name}`,
         name: `New conversation with ${displayName(profile)}`,
-        callback: () => void this.conversations.create(profile),
+        callback: () => void this.newConversation(profile.name),
       });
     }
     this.addCommand({
@@ -198,7 +202,8 @@ export default class DuetPlugin extends Plugin {
   private async shutdown(): Promise<void> {
     await this.conversations.destroy();
     await this.mentions.closeAll();
-    this.hub.destroy();
+    await this.agents.closeAll();
+    uninstallCollab(this.hub);
     await this.ledger.flush();
   }
 
@@ -213,6 +218,16 @@ export default class DuetPlugin extends Plugin {
     this.lensButton.toggleClass('is-active', this.settings.lens);
     this.lens.refresh();
     await this.persist();
+  }
+
+  /** Opens a conversation note with the named agent, or the first one. */
+  private async newConversation(name?: string): Promise<void> {
+    const profile = (name && this.profile(name)) || this.settings.profiles[0];
+    if (!profile) {
+      new Notice('Duet has no agents. Add one in the settings.');
+      return;
+    }
+    await this.conversations.create(this.agents.conversationAgent(profile));
   }
 
   private tagStyles(): TagStyle[] {

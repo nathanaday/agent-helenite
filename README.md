@@ -107,7 +107,7 @@ General settings:
 
 | Setting | What it does |
 |---|---|
-| Conversation folder | Where new conversation notes go. The default is `Conversations`. |
+| Conversation folder | Where new conversation notes go. The default is `conversations`. |
 | Show agents typing | Agents type their edits into open notes. Off: edits appear at once. Duet also turns this off when your system asks for reduced motion. |
 | Close idle agents after | Minutes without activity before an agent process stops. The next message continues the same conversation. |
 
@@ -122,7 +122,7 @@ import type { DuetApi } from './duet-api';
 
 const duet = (this.app as any).plugins.getPlugin('duet')?.api as DuetApi | undefined;
 if (duet && duet.version >= 1) {
-  const { path } = await duet.newConversation({ message: '/my-plugin:my-skill', loadUserSetup: true });
+  const { path } = await duet.newConversation({ message: '/my-plugin:my-skill' });
   const stop = duet.onTurnEnd(path, (turn) => console.log(turn.status));
 }
 ```
@@ -132,7 +132,7 @@ if (duet && duet.version >= 1) {
 | `version` | `1`. A later version only adds members. |
 | `newConversation(options)` | Creates a conversation note, opens it in a new tab, and sends `options.message` as the first message. Resolves with `{ path }` when the message is sent. |
 | `conversationStatus(path)` | `working`, `active` (waits for a message), `ended`, or `none` (no conversation note has this path). |
-| `onTurnEnd(path, callback)` | Calls `callback` with `{ path, status, error? }` after each turn. `status` is `completed`, `interrupted` or `failed`. Returns a function that stops the calls. |
+| `onTurnEnd(path, callback)` | Calls `callback` with `{ path, status, text?, error? }` after each turn. `text` is the agent's final message. `status` is `completed`, `interrupted` or `failed`. Returns a function that stops the calls. |
 
 Options of `newConversation`:
 
@@ -143,7 +143,6 @@ Options of `newConversation`:
 | `title` | the date and the first words of the message | The name of the note. |
 | `folder` | the conversation folder setting | The folder of the note. |
 | `open` | `true` | `false` creates the note without opening it. |
-| `loadUserSetup` | `false` | Claude Code only. Starts the agent with the user's MCP servers and plugins, also when the agent's setting is off. The note keeps this choice. |
 
 Limits:
 
@@ -176,7 +175,7 @@ Open `dev-vault/` as a vault in Obsidian. Other commands:
 | Command | What it does |
 |---|---|
 | `npm run plugin:build` | Builds the plugin into `plugin/dist`. |
-| `npm run typecheck` | Type-checks the library and the plugin. |
+| `npm run typecheck` | Type-checks the plugin, the tests and the scripts. |
 | `npm run lint` | Runs Obsidian's review rules on the plugin code. |
 | `npm test` | Runs the unit tests. |
 | `npm run test:obsidian` | Starts a separate Obsidian with a temporary vault and tests mentions and conversations with Claude Code and Codex. Your own Obsidian and vaults are not touched. |
@@ -190,7 +189,7 @@ Work happens on the `preview` branch. `main` takes changes only through a pull r
 
 Obsidian reads `manifest.json` from `main`. Until the release job ends, about a minute, `main` names a version with no release, and an install in that minute fails once.
 
-The plugin is built on a small TypeScript library in `src/` that starts and drives Claude Code and Codex sessions. Other apps can use it as a package; [duet-demo](https://github.com/nathanaday/duet-demo) is a browser app built on it. The design notes are in [docs/design.md](docs/design.md).
+Duet is built on [Yami](https://github.com/nathanaday/yami): `yami/agent` starts and drives Claude Code and Codex sessions, and `yami-obsidian` holds the shared documents, the conversation notes and the approval prompts. `package.json` links both from a checkout of Yami next to this repository (`../yami`). The design notes are in [docs/design.md](docs/design.md).
 
 ## License
 

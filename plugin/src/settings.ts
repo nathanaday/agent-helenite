@@ -1,5 +1,5 @@
 import { type App, PluginSettingTab, type SettingDefinitionGroup, type SettingDefinitionItem } from 'obsidian';
-import type { ApprovalSetting, Harness } from '../../src/index.ts';
+import type { ApprovalSetting, Harness } from 'yami/agent';
 import type DuetPlugin from './main.ts';
 
 export interface AgentProfile {
@@ -41,7 +41,7 @@ export const DEFAULT_SETTINGS: DuetSettings = {
     { name: 'codex', harness: 'codex', executablePath: '', env: '', model: '', effort: '', approval: 'ask', userTools: false, color: AGENT_COLORS.codex },
   ],
   idleMinutes: 15,
-  conversationFolder: 'Conversations',
+  conversationFolder: 'conversations',
   animate: true,
   lens: false,
 };
@@ -110,7 +110,7 @@ export class DuetSettingTab extends PluginSettingTab {
       {
         name: 'Conversation folder',
         desc: 'Where new conversation notes go.',
-        control: { type: 'folder', key: 'conversationFolder', placeholder: 'Conversations', includeRoot: true },
+        control: { type: 'folder', key: 'conversationFolder', placeholder: 'conversations', includeRoot: true },
       },
       {
         name: 'Show agents typing',

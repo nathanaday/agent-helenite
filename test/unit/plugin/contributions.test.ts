@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { diffOps } from '../../../plugin/src/collab/text-ops.ts';
+import { describe, expect, it, vi } from 'vitest';
+
+// The Yami layer imports Obsidian, which has no code outside the app.
+vi.mock('obsidian', () => ({ Modal: class {} }));
+
+import { diffOps } from 'yami-obsidian';
 import { applyChange, type Contributions, mapSpans, reconcile, type Span } from '../../../plugin/src/contributions/spans.ts';
 
 const T1 = '2026-10-06T10:00:00.000Z';

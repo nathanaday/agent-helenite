@@ -3,7 +3,7 @@
   "description": "Obsidian's review rules for the plugin. typescript-eslint needs the TypeScript 5 API, which TypeScript 7 does not have, so the linter has its own install.",
   "type": "module",
   "scripts": {
-    "lint": "cd ../.. && eslint --config scripts/lint/eslint.config.mjs --max-warnings 0 plugin/src src package.json"
+    "lint": "cd ../.. && eslint --config scripts/lint/eslint.config.mjs --max-warnings 0 plugin/src package.json"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
