@@ -1,6 +1,6 @@
 import type { EditorView } from '@codemirror/view';
 import { MarkdownView, Notice, Plugin, TFile } from 'obsidian';
-import { type CollabHub, ConversationManager, installCollab, PermissionPrompts, uninstallCollab } from 'yami-obsidian';
+import { type CollabHub, ConversationManager, installCollab, PermissionPrompts, uninstallCollab } from 'yami/obsidian';
 import { ProfileAgents } from './agents.ts';
 import type { DuetApi } from './api.ts';
 import { ContributionLedger } from './contributions/ledger.ts';

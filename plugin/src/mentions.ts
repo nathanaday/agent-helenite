@@ -1,7 +1,7 @@
 import { Notice, type TFile } from 'obsidian';
 import type * as Y from 'yjs';
 import type { AgentEvent, AgentSession } from 'yami/agent';
-import { activity, type CollabHub, EditorBinding, LiveRegion, type PermissionPrompts, Presence, type SharedNote } from 'yami-obsidian';
+import { activity, type CollabHub, EditorBinding, LiveRegion, type PermissionPrompts, Presence, type SharedNote } from 'yami/obsidian';
 import { type ProfileAgents, startSession } from './agents.ts';
 import { calloutHeader, isCalloutHeader, renderCallout, type ReplyState } from './callout.ts';
 import type { TriggeredMention } from './enter-trigger.ts';

@@ -189,7 +189,7 @@ Work happens on the `preview` branch. `main` takes changes only through a pull r
 
 Obsidian reads `manifest.json` from `main`. Until the release job ends, about a minute, `main` names a version with no release, and an install in that minute fails once.
 
-Duet is built on [Yami](https://github.com/nathanaday/yami): `yami/agent` starts and drives Claude Code and Codex sessions, and `yami-obsidian` holds the shared documents, the conversation notes and the approval prompts. `package.json` links both from a checkout of Yami next to this repository (`../yami`). The design notes are in [docs/design.md](docs/design.md).
+Duet is built on [Yami](https://github.com/nathanaday/yami): `yami/agent` starts and drives Claude Code and Codex sessions, and `yami/obsidian` holds the shared documents, the conversation notes and the approval prompts. `package.json` links `yami` from a checkout of Yami next to this repository (`../yami`). The design notes are in [docs/design.md](docs/design.md).
 
 ## License
 

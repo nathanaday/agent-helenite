@@ -1,6 +1,6 @@
 import { type App, normalizePath, type Plugin, TFile } from 'obsidian';
 import type * as Y from 'yjs';
-import { AgentPeer, applyOps, deltaOps, diffOps, type DiskWriter, type HubObserver, type SharedNote } from 'yami-obsidian';
+import { AgentPeer, applyOps, deltaOps, diffOps, type DiskWriter, type HubObserver, type SharedNote } from 'yami/obsidian';
 import { applyChange, type Contributions, mapSpans, reconcile, type Span } from './spans.ts';
 
 /** Folder of the ledger files, in the vault. One JSON file for each note, at the note's path. */

@@ -15,7 +15,7 @@ const targets = [DIST, ...(values.vault ? [path.join(values.vault, '.obsidian/pl
 /** Duet's own styles, then the styles of the Yami layer that the plugin bundles. */
 async function styles() {
   const own = await readFile('plugin/styles.css', 'utf8');
-  const yami = await readFile('node_modules/yami-obsidian/styles.css', 'utf8');
+  const yami = await readFile('node_modules/yami/src/obsidian/styles.css', 'utf8');
   return `${own.trimEnd()}\n\n${yami}`;
 }
 

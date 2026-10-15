@@ -4,10 +4,10 @@ These notes record the decisions behind Duet. The agent sessions, the shared doc
 
 ## What Duet is
 
-Duet is an Obsidian plugin built on `yami` and `yami-obsidian`:
+Duet is an Obsidian plugin built on `yami`:
 
 - `yami/agent` starts and drives Claude Code and Codex sessions, with one event model for both.
-- `yami-obsidian` holds the shared documents (Yjs), the agent cursors, the conversation notes with their message box, and the approval prompts. `installCollab` gives one Obsidian window one collab hub, which every Yami plugin shares.
+- `yami/obsidian` holds the shared documents (Yjs), the agent cursors, the conversation notes with their message box, and the approval prompts. `installCollab` gives one Obsidian window one collab hub, which every Yami plugin shares.
 
 Duet adds what is its own:
 
@@ -48,7 +48,7 @@ An editor extension shows each `@name` tag of a configured agent as a pill in th
 
 ## API for other plugins
 
-A plugin such as Atlas starts a Duet conversation through `plugin.api` instead of running its own agents. `plugin/src/api.ts` holds the types and imports nothing, so another plugin can copy it. The `profile` option names a Duet agent by its tag, in any letter case; Duet passes the registered agent to `ConversationManager.start` of `yami-obsidian`, which creates the note and sends the first message.
+A plugin such as Atlas starts a Duet conversation through `plugin.api` instead of running its own agents. `plugin/src/api.ts` holds the types and imports nothing, so another plugin can copy it. The `profile` option names a Duet agent by its tag, in any letter case; Duet passes the registered agent to `ConversationManager.start` of `yami/obsidian`, which creates the note and sends the first message.
 
 - **The path is final at once.** The note is named when it is created, from `title` or from the message, so the first message does not rename it.
 - **Status without a race.** The conversation is `working` when `newConversation` resolves. When a turn ends with a message in the queue, the next turn starts before the listeners run, so a listener sees `working`.
@@ -82,9 +82,9 @@ The settings tab uses the declarative settings API of Obsidian 1.13, so each set
 
 ## Bundling
 
-`scripts/esbuild-options.mjs` bundles the plugin as CommonJS for Obsidian's renderer with the same fixes as the Yami plugin: Node's timers and a tolerant `events.setMaxListeners` for the Claude Agent SDK, and the interpreting JSON Schema validator for the MCP SDK, because Obsidian's review rejects code that generates code. `scripts/plugin.mjs` writes `styles.css` as Duet's own styles followed by `yami-obsidian/styles.css`.
+`scripts/esbuild-options.mjs` bundles the plugin as CommonJS for Obsidian's renderer with the same fixes as the Yami plugin: Node's timers and a tolerant `events.setMaxListeners` for the Claude Agent SDK, and the interpreting JSON Schema validator for the MCP SDK, because Obsidian's review rejects code that generates code. `scripts/plugin.mjs` writes `styles.css` as Duet's own styles followed by `yami/obsidian/styles.css`.
 
-The unit tests in `test/unit/plugin/` are type-checked with `plugin/tsconfig.json`. Duet's `obsidian` and CodeMirror type packages must be the versions that `yami-obsidian` uses, or TypeScript sees two sets of nominal types.
+The unit tests in `test/unit/plugin/` are type-checked with `plugin/tsconfig.json`. Duet's `obsidian` and CodeMirror type packages must be the versions that `yami` uses, or TypeScript sees two sets of nominal types.
 
 ## Testing in a separate Obsidian
 

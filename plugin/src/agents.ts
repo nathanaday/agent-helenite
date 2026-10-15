@@ -2,7 +2,7 @@ import type { App } from 'obsidian';
 import type { Agent, AgentPreferences, AgentSession, SessionStart } from 'yami/agent';
 import { ClaudeAgent } from 'yami/agent/claude';
 import { CodexAgent } from 'yami/agent/codex';
-import { type ConversationAgent, vaultRoot } from 'yami-obsidian';
+import { type ConversationAgent, vaultRoot } from 'yami/obsidian';
 import { type AgentProfile, parseEnv } from './settings.ts';
 
 /** The Yami agents of the profiles in the settings. A changed profile gets a new agent on the next use. */

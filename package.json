@@ -15,8 +15,7 @@
     "set-version": "node scripts/set-version.mjs"
   },
   "dependencies": {
-    "yami": "file:../yami/yami",
-    "yami-obsidian": "file:../yami/yami-obsidian"
+    "yami": "file:../yami/yami"
   },
   "devDependencies": {
     "@codemirror/language": "^6.12.4",

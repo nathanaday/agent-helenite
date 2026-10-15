@@ -1,6 +1,6 @@
 import type * as Y from 'yjs';
 import { defineTool, type ToolSet, z } from 'yami/agent';
-import { type AgentPeer, diffOps, type SharedNote, type TextOp } from 'yami-obsidian';
+import { type AgentPeer, diffOps, type SharedNote, type TextOp } from 'yami/obsidian';
 
 /** Stands for the request line and the reply callout in the text that the agent sees. */
 export const PLACEHOLDER = '⟦request and reply⟧';
