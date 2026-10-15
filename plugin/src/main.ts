@@ -227,7 +227,12 @@ export default class DuetPlugin extends Plugin {
       new Notice('Duet has no agents. Add one in the settings.');
       return;
     }
-    await this.conversations.create(this.agents.conversationAgent(profile));
+    try {
+      await this.conversations.create(this.agents.conversationAgent(profile));
+    } catch (error) {
+      console.error(error);
+      new Notice(`Duet could not start a conversation: ${(error as Error).message}`, 10_000);
+    }
   }
 
   private tagStyles(): TagStyle[] {
