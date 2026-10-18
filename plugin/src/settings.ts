@@ -1,5 +1,6 @@
 import { type App, PluginSettingTab, type SettingDefinitionGroup, type SettingDefinitionItem } from 'obsidian';
 import type { ApprovalSetting, Harness } from 'yami/agent';
+import { HARNESS_COLORS } from 'yami/obsidian';
 import type DuetPlugin from './main.ts';
 
 export interface AgentProfile {
@@ -33,12 +34,10 @@ export interface DuetSettings {
   lens: boolean;
 }
 
-export const AGENT_COLORS: Record<Harness, string> = { claude: '#d97757', codex: '#4f8cf7' };
-
 export const DEFAULT_SETTINGS: DuetSettings = {
   profiles: [
-    { name: 'claude', harness: 'claude', executablePath: '', env: '', model: '', effort: '', approval: 'ask', userTools: false, color: AGENT_COLORS.claude },
-    { name: 'codex', harness: 'codex', executablePath: '', env: '', model: '', effort: '', approval: 'ask', userTools: false, color: AGENT_COLORS.codex },
+    { name: 'claude', harness: 'claude', executablePath: '', env: '', model: '', effort: '', approval: 'ask', userTools: false, color: HARNESS_COLORS.claude },
+    { name: 'codex', harness: 'codex', executablePath: '', env: '', model: '', effort: '', approval: 'ask', userTools: false, color: HARNESS_COLORS.codex },
   ],
   idleMinutes: 15,
   conversationFolder: 'conversations',
@@ -52,7 +51,7 @@ export function upgradeSettings(saved: Partial<DuetSettings> | undefined): DuetS
   settings.profiles = settings.profiles.map((profile) => ({
     ...DEFAULT_SETTINGS.profiles[0]!,
     ...profile,
-    color: profile.color || AGENT_COLORS[profile.harness],
+    color: profile.color || HARNESS_COLORS[profile.harness],
   }));
   return settings;
 }

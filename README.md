@@ -45,14 +45,14 @@ Write `@claude` or `@codex` and a request, then press Enter at the end of the li
 - **Edit the note:** ask for a change, such as `@claude make the list shorter`. The agent changes this note only. It can read your other notes, but it cannot change them or run commands, so a mention never asks for approval.
 - **Follow up:** each note keeps its own conversation. A later `@claude make it shorter` in the same note continues it, also after you restart Obsidian.
 - **Undo the agent:** run **Duet: Undo the agent's last changes in this note**. This removes the edits of the agent's last turn and keeps your own typing and the agent's reply. Cmd+Z or Ctrl+Z undoes only your own typing.
-- **Stop:** run **Duet: Stop the agent in this note**. Assign it a hotkey if you use it often.
+- **Stop:** run **Duet: Stop the mention agent in this note**. Assign it a hotkey if you use it often.
 - **Start over:** run **Duet: Forget the mention conversation in this note**.
 
 Duet ignores tags in code blocks, in blockquotes and in email addresses. These tags stay plain text.
 
 ### Conversation notes
 
-Run **Duet: New conversation**, or select the ribbon button. You get a note with a message box at the bottom. The note records the conversation: your messages, the agent's replies, and its tool calls in collapsed sections. The note gets its name from your first message.
+Run **Duet: New conversation with claude**, or the command of another agent, or select the ribbon button for the first agent. You get a note with a message box at the bottom. The note records the conversation: your messages, the agent's replies, and its tool calls in collapsed sections. The note gets its name from your first message.
 
 ![A conversation note with the message box](docs/images/conversation.png)
 
@@ -113,6 +113,8 @@ General settings:
 
 To use a second Claude account, add an agent with the tag `work`, the agent Claude Code, and the environment variable `CLAUDE_CONFIG_DIR=~/.claude-work`.
 
+A change to an agent applies at once: its tag works in mentions, and **Duet: New conversation with work** is in the command palette, with no restart. A change to **Conversation folder** or **Close idle agents after** applies to mentions and to the API at once, and to the conversation commands after you restart Obsidian or turn Duet off and on. **Show agents typing** applies to mentions.
+
 ## API for other plugins
 
 Another Obsidian plugin can start a Duet conversation and follow it. For the types, copy [`plugin/src/api.ts`](plugin/src/api.ts) into your plugin. It imports nothing.
@@ -152,6 +154,16 @@ Limits:
 - The agent asks for approval and asks its questions as in other conversations: in the message box when the note is open, otherwise in a dialog.
 - A listener follows its note when the user renames it. `conversationStatus` takes the current path.
 
+## What Duet adds to your vault
+
+Duet runs on Yami, which every Yami plugin shares. When Duet starts, Yami adds these to your vault:
+
+- **Files:** `Yami.base`, a base that lists Yami's modules and sessions; `internal/yami/skills/run/SKILL.md`, the base skill of Yami's sessions; and `internal/wiki/`, the documents of Yami's wiki module (its ledger, its policies, its promises and its ingest skill). Yami never overwrites a file that you edited. You cannot turn these files off.
+- **Folder colors:** `internal/` is gray in the file explorer, and the folders of each module have the module's color.
+- **Commands:** besides the conversation commands, Yami adds commands for sessions (run, resume, stop and kill the session in the editor), for the wiki (search, lint, versions, ingest and more), and **New module**.
+- **Status bar:** an item that says which agents work in conversation notes.
+- **Agent tools and skills:** every agent gets Yami's tools, such as `wiki_search`, and Yami's skills, such as `/wiki:ingest`. A mention agent gets only Duet's note tools.
+
 ## Network use, accounts and privacy
 
 Duet does not connect to the internet. It starts Claude Code or Codex on your computer, and those programs connect to their providers:
@@ -189,7 +201,7 @@ Work happens on the `preview` branch. `main` takes changes only through a pull r
 
 Obsidian reads `manifest.json` from `main`. Until the release job ends, about a minute, `main` names a version with no release, and an install in that minute fails once.
 
-Duet is built on [Yami](https://github.com/nathanaday/yami): `yami/agent` starts and drives Claude Code and Codex sessions, and `yami/obsidian` holds the shared documents, the conversation notes and the approval prompts. `package.json` links `yami` from a checkout of Yami next to this repository (`../yami`). The design notes are in [docs/design.md](docs/design.md).
+Duet is built on [Yami](https://github.com/nathanaday/yami). `createYami` from `yami/obsidian` gives Duet the shared documents, the conversation notes with their commands, the approval prompts and the status bar, and `yami/esbuild` gives the bundle options and the stylesheet. Duet adds the mentions, the agent profiles and the settings, the contribution ledger and the lens, and `plugin.api`. `package.json` links `yami` from a checkout of Yami next to this repository (`../yami`). The design notes are in [docs/design.md](docs/design.md).
 
 ## License
 

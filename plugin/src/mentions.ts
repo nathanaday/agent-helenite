@@ -1,7 +1,7 @@
 import { Notice, type TFile } from 'obsidian';
 import type * as Y from 'yjs';
 import type { AgentEvent, AgentSession } from 'yami/agent';
-import { activity, type CollabHub, EditorBinding, LiveRegion, type PermissionPrompts, Presence, type SharedNote } from 'yami/obsidian';
+import { activity, type CollabHub, EditorBinding, LiveRegion, Presence, type SharedNote } from 'yami/obsidian';
 import { type ProfileAgents, startSession } from './agents.ts';
 import { calloutHeader, isCalloutHeader, renderCallout, type ReplyState } from './callout.ts';
 import type { TriggeredMention } from './enter-trigger.ts';
@@ -76,12 +76,10 @@ export class MentionAgents {
     private readonly hub: CollabHub,
     private readonly agents: ProfileAgents,
     private readonly sessions: SessionIndex,
-    private readonly prompts: PermissionPrompts,
     private readonly options: {
       idleMinutes: () => number;
       animate: () => boolean;
       save: () => Promise<void>;
-      onActivity: () => void;
     },
   ) {}
 
@@ -117,7 +115,6 @@ export class MentionAgents {
     }
     window.clearTimeout(live.idleTimer);
     live.replies.push(reply);
-    this.options.onActivity();
     const text = await live.tools.show((note) => hiddenRange(note, reply));
     const prompt = [
       `Note: ${file.path} (line ${mention.line + 1})`,
@@ -143,13 +140,6 @@ export class MentionAgents {
       }
     }
     return stopped;
-  }
-
-  /** Reverts the changes that agents made to a note in their last turn. */
-  revert(note: SharedNote): boolean {
-    if (!note.agentUndo.canUndo()) return false;
-    note.agentUndo.undo();
-    return true;
   }
 
   /** Ends the conversations in a note. The next mention starts new ones. */
@@ -229,7 +219,6 @@ export class MentionAgents {
       access: 'read-only',
       resume: this.sessions[file.path]?.[profile.name],
       tools: tools.tools,
-      onPermission: (request) => this.prompts.ask(request, { agent: profile.name, notePath: file.path }),
     });
     (this.sessions[file.path] ??= {})[profile.name] = session.id;
     await this.options.save();
@@ -292,7 +281,6 @@ export class MentionAgents {
             for (const [key, candidate] of this.settled) if (candidate === live) void this.closeKey(key);
           }, this.options.idleMinutes() * 60_000);
         }
-        this.options.onActivity();
         break;
       }
       case 'closed':
@@ -300,7 +288,6 @@ export class MentionAgents {
         for (const waiting of live.replies.splice(0)) {
           void this.finish(live, waiting, { kind: 'failed', text: '', error: event.error ?? 'The agent closed.' });
         }
-        this.options.onActivity();
         break;
     }
   }
@@ -316,10 +303,9 @@ export class MentionAgents {
       }, 1200);
       this.hub.release(reply.note, reply);
     }
-    this.options.onActivity();
   }
 
-  /** The agent started a turn on its own, for example after a background task. Its reply goes to the end of the note. */
+  /** The agent started a turn on its own. Its reply goes to the end of the note. */
   private async followUp(live: LiveSession): Promise<void> {
     const title = `${displayName(live.profile)} (follow-up)`;
     const reply: Reply = { title, note: undefined, region: undefined, streaming: '', message: '', line: undefined };
@@ -332,7 +318,6 @@ export class MentionAgents {
     reply.wrap = (callout) => `${separator}${callout}\n`;
     reply.region = new LiveRegion(live.presence.peer(note), end, end);
     this.render(reply, { kind: 'working', text: '' });
-    this.options.onActivity();
   }
 
   private render(reply: Reply, state: ReplyState): void {

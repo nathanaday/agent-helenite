@@ -21,7 +21,7 @@ describe('Duet in Obsidian', () => {
     // The editor and the shared document must never differ.
     const drift = await obsidian.page.evaluate(() => {
       const app = (window as any).app;
-      const hub = app.plugins.plugins.duet?.hub;
+      const hub = app.plugins.plugins.duet?.yami.hub;
       const problems: string[] = [];
       for (const leaf of app.workspace.getLeavesOfType('markdown')) {
         const note = leaf.view.file && hub?.get(leaf.view.file.path);
@@ -39,7 +39,7 @@ describe('Duet in Obsidian', () => {
     await page().waitForFunction(
       () => {
         const plugin = (window as any).app.plugins.plugins.duet;
-        return plugin.mentions.working.length === 0 && plugin.conversations.working.length === 0;
+        return plugin.mentions.working.length === 0 && plugin.yami.conversations.working.length === 0;
       },
       undefined,
       { timeout, polling: 250 },
@@ -165,7 +165,7 @@ describe('Duet in Obsidian', () => {
     it('stops a reply with the Stop command', { timeout: TIMEOUT }, async () => {
       await mention('Ideas.md', '@claude Write a 600 word essay about lighthouses.');
       await obsidian.waitForNote('Ideas.md', (text) => /lighthouses\.\n> \[!agent\]\+ Claude\n> \S/.test(text), 90_000);
-      await page().evaluate(() => (window as any).app.commands.executeCommandById('duet:stop'));
+      await page().evaluate(() => (window as any).app.commands.executeCommandById('duet:stop-mention'));
       await idle(15_000);
       expect(await obsidian.waitForNote('Ideas.md', () => true)).toMatch(/> \*Stopped\.\*\n\n$/);
     });
@@ -196,7 +196,7 @@ describe('Duet in Obsidian', () => {
   });
 
   describe('conversation notes', () => {
-    async function newConversation(command = 'duet:new-chat') {
+    async function newConversation(command = 'duet:new-conversation-claude') {
       await page().evaluate((id) => (window as any).app.commands.executeCommandById(id), command);
       await page().waitForSelector('.yami-composer textarea', { timeout: 15_000 });
     }
@@ -213,6 +213,8 @@ describe('Duet in Obsidian', () => {
     it('writes the exchange into the note and names the note', { timeout: TIMEOUT }, async () => {
       await newConversation();
       await send('Read [[Ideas]], then reply with the number of bullets in its first list, as a digit only.');
+      // Yami's status bar says which agent works.
+      await page().waitForFunction(() => [...document.querySelectorAll('.status-bar-item')].some((item) => /claude/i.test(item.textContent ?? '')), undefined, { timeout: 10_000 });
       await idle();
       const file = await activePath();
       expect(file).toMatch(/^conversations\/\d{4}-\d{2}-\d{2} Read Ideas, then reply with the number/);
@@ -333,7 +335,7 @@ describe('Duet in Obsidian', () => {
     });
 
     it('talks to Codex in a Codex conversation', { timeout: TIMEOUT }, async () => {
-      await newConversation('duet:new-chat-codex');
+      await newConversation('duet:new-conversation-codex');
       await send('Reply with exactly the word: kiwi');
       await idle();
       const text = await obsidian.waitForNote(await activePath(), () => true);
@@ -400,6 +402,36 @@ describe('Duet in Obsidian', () => {
       } finally {
         await page().evaluate(() => (window as any).app.setting.close());
       }
+    });
+
+    it('offers a new agent as a command and a mention tag with no reload', { timeout: TIMEOUT }, async () => {
+      const opened = page().context().waitForEvent('page', { timeout: 10_000 });
+      await page().evaluate(() => {
+        const setting = (window as any).app.setting;
+        setting.open();
+        setting.openTabById('duet');
+      });
+      const win = await opened;
+      try {
+        await win.getByText('Add agent', { exact: true }).click();
+        await expect.poll(tags).toEqual(['claude', 'codex', 'agent2']);
+      } finally {
+        await page().evaluate(() => (window as any).app.setting.close());
+      }
+      const commands = () => page().evaluate(() => Object.keys((window as any).app.commands.commands).filter((id) => id.startsWith('duet:new-conversation-')).sort());
+      expect(await commands()).toEqual(['duet:new-conversation-agent2', 'duet:new-conversation-claude', 'duet:new-conversation-codex']);
+
+      await openAtEnd(page(), 'Welcome.md');
+      await page().keyboard.type('@agent2');
+      await page().waitForSelector('.duet-tag:text-is("@agent2")', { timeout: 5000 });
+      for (let i = 0; i < 7; i++) await page().keyboard.press('Backspace');
+
+      await page().evaluate(async () => {
+        const plugin = (window as any).app.plugins.plugins.duet;
+        plugin.settings.profiles.pop();
+        await plugin.saveSettings();
+      });
+      expect(await commands()).toEqual(['duet:new-conversation-claude', 'duet:new-conversation-codex']);
     });
   });
 });
