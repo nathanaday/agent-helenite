@@ -67,11 +67,6 @@ export class NoteTools {
 
   constructor(private readonly context: NoteToolContext) {}
 
-  /** For a new session, which has seen nothing of the note. */
-  reset(): void {
-    this.seen = undefined;
-  }
-
   /**
    * Records what the agent sees in a new message, with `hidden` as the request and reply.
    * Returns the view, or undefined when the agent already saw this text.

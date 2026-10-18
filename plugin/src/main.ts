@@ -33,15 +33,14 @@ export default class DuetPlugin extends Plugin {
     this.sessions = data.sessions ?? {};
 
     this.agents = new ProfileAgents(this.app, () => this.settings.profiles);
-    const animate = () => this.settings.animate;
     this.yami = createYami(this, {
       agents: this.agents.entries(),
       conversationFolder: () => this.settings.conversationFolder,
       idleMinutes: () => this.settings.idleMinutes,
-      animate,
+      animate: () => this.settings.animate,
     });
 
-    this.ledger = new ContributionLedger(this.app, this.yami.hub);
+    this.ledger = new ContributionLedger(this.app);
     this.ledger.install(this);
     this.yami.hub.observe(this.ledger);
     this.lens = new ContributionLens(this.app, this.ledger, () => this.settings.lens);
@@ -64,15 +63,14 @@ export default class DuetPlugin extends Plugin {
       onTurnEnd: (path, callback) => conversations.onTurnEnd(path, callback),
     };
 
-    const notes = this.yami.noteSessions({
+    this.mentions = new MentionAgents(this.app, this.yami, {
       ids: this.sessions,
       save: (ids) => {
         this.sessions = ids;
         return this.persist();
       },
+      profile: (name) => this.profile(name),
     });
-    // library-loop: F1.3
-    this.mentions = new MentionAgents(this.yami.hub, notes, () => animate() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
     this.lensButton = this.addRibbonIcon('highlighter', 'Toggle contribution lens', () => void this.toggleLens());
     this.lensButton.addClass('duet-lens-toggle');

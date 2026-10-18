@@ -1,6 +1,6 @@
 import { type App, normalizePath, type Plugin, TFile } from 'obsidian';
-import { applyOps, diffOps } from 'yami/document';
-import type { CollabHub, DiskWriter, HubObserver, NoteChange, SharedNote } from 'yami/obsidian';
+import { diffOps } from 'yami/document';
+import type { DiskWriter, HubObserver, NoteChange, SharedNote } from 'yami/obsidian';
 import { applyChange, type Contributions, mapSpans, reconcile, type Span } from './spans.ts';
 
 /** Folder of the ledger files, in the vault. One JSON file for each note, at the note's path. */
@@ -15,9 +15,8 @@ interface LedgerFile {
   spans: Span[];
 }
 
-/** A shared note that the ledger follows: the text that its queued changes apply to, and the record's queue. */
+/** A shared note that the ledger follows, and the record's queue. */
 interface SharedEntry {
-  text: string;
   live: boolean;
   queue: Promise<NoteRecord | undefined>;
 }
@@ -47,10 +46,7 @@ export class ContributionLedger implements HubObserver {
   private readonly listeners = new Set<(path: string) => void>();
   private readonly attached = new Map<SharedNote, SharedEntry>();
 
-  constructor(
-    private readonly app: App,
-    private readonly hub: CollabHub,
-  ) {}
+  constructor(private readonly app: App) {}
 
   install(plugin: Plugin): void {
     plugin.registerEvent(
@@ -89,7 +85,6 @@ export class ContributionLedger implements HubObserver {
     // The queued changes apply to the text at this moment, so the record catches up to it first.
     const text = note.content;
     const entry: SharedEntry = {
-      text,
       live: true,
       queue: this.load(note.path).then((record) => {
         if (record) {
@@ -110,13 +105,9 @@ export class ContributionLedger implements HubObserver {
     };
   }
 
-  changed({ path, ops, agent }: NoteChange): void {
-    // library-loop: F1.2
-    const note = this.hub.get(path);
-    const entry = note && this.attached.get(note);
+  changed({ note, path, ops, before, agent }: NoteChange): void {
+    const entry = this.attached.get(note);
     if (!entry || !ops.length) return;
-    const before = entry.text;
-    entry.text = applyOps(before, ops);
     const author = agent && { name: agent.name, time: new Date().toISOString() };
     entry.queue = entry.queue.then((found) => {
       if (!found && !author) return found;
