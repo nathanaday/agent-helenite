@@ -141,7 +141,7 @@ describe('Duet in Obsidian', () => {
       await mention('Ideas.md', '@claude Add the line "Reviewed." directly under the "# Ideas" heading. Then reply with: Added.');
       await idle();
       expect(await obsidian.waitForNote('Ideas.md', () => true)).toMatch(/# Ideas\n+Reviewed\./);
-      await page().evaluate(() => (window as any).app.commands.executeCommandById('duet:revert'));
+      await page().evaluate(() => (window as any).app.commands.executeCommandById('duet:yami-revert'));
       const reverted = await obsidian.waitForNote('Ideas.md', (text) => !/# Ideas\n+Reviewed\./.test(text), 5000);
       // The reply stays; only the edit goes away.
       expect(reverted.startsWith(before.slice(0, before.indexOf('- ')))).toBe(true);
@@ -165,7 +165,9 @@ describe('Duet in Obsidian', () => {
     it('stops a reply with the Stop command', { timeout: TIMEOUT }, async () => {
       await mention('Ideas.md', '@claude Write a 600 word essay about lighthouses.');
       await obsidian.waitForNote('Ideas.md', (text) => /lighthouses\.\n> \[!agent\]\+ Claude\n> \S/.test(text), 90_000);
-      await page().evaluate(() => (window as any).app.commands.executeCommandById('duet:stop-mention'));
+      // Yami's status bar shows the mention, and Yami's Stop command stops it.
+      await page().waitForFunction(() => /^claude working in Ideas$/.test(document.querySelector('.yami-status.is-working')?.textContent ?? ''), undefined, { timeout: 10_000 });
+      await page().evaluate(() => (window as any).app.commands.executeCommandById('duet:yami-stop'));
       await idle(15_000);
       expect(await obsidian.waitForNote('Ideas.md', () => true)).toMatch(/> \*Stopped\.\*\n\n$/);
     });
@@ -196,7 +198,7 @@ describe('Duet in Obsidian', () => {
   });
 
   describe('conversation notes', () => {
-    async function newConversation(command = 'duet:new-conversation-claude') {
+    async function newConversation(command = 'duet:yami-new-conversation-claude') {
       await page().evaluate((id) => (window as any).app.commands.executeCommandById(id), command);
       await page().waitForSelector('.yami-composer textarea', { timeout: 15_000 });
     }
@@ -214,7 +216,7 @@ describe('Duet in Obsidian', () => {
       await newConversation();
       await send('Read [[Ideas]], then reply with the number of bullets in its first list, as a digit only.');
       // Yami's status bar says which agent works.
-      await page().waitForFunction(() => [...document.querySelectorAll('.status-bar-item')].some((item) => /claude/i.test(item.textContent ?? '')), undefined, { timeout: 10_000 });
+      await page().waitForFunction(() => /^claude working in /.test(document.querySelector('.yami-status.is-working')?.textContent ?? ''), undefined, { timeout: 10_000 });
       await idle();
       const file = await activePath();
       expect(file).toMatch(/^conversations\/\d{4}-\d{2}-\d{2} Read Ideas, then reply with the number/);
@@ -335,7 +337,7 @@ describe('Duet in Obsidian', () => {
     });
 
     it('talks to Codex in a Codex conversation', { timeout: TIMEOUT }, async () => {
-      await newConversation('duet:new-conversation-codex');
+      await newConversation('duet:yami-new-conversation-codex');
       await send('Reply with exactly the word: kiwi');
       await idle();
       const text = await obsidian.waitForNote(await activePath(), () => true);
@@ -418,8 +420,8 @@ describe('Duet in Obsidian', () => {
       } finally {
         await page().evaluate(() => (window as any).app.setting.close());
       }
-      const commands = () => page().evaluate(() => Object.keys((window as any).app.commands.commands).filter((id) => id.startsWith('duet:new-conversation-')).sort());
-      expect(await commands()).toEqual(['duet:new-conversation-agent2', 'duet:new-conversation-claude', 'duet:new-conversation-codex']);
+      const commands = () => page().evaluate(() => Object.keys((window as any).app.commands.commands).filter((id) => id.startsWith('duet:yami-new-conversation-')).sort());
+      expect(await commands()).toEqual(['duet:yami-new-conversation-agent2', 'duet:yami-new-conversation-claude', 'duet:yami-new-conversation-codex']);
 
       await openAtEnd(page(), 'Welcome.md');
       await page().keyboard.type('@agent2');
@@ -431,7 +433,7 @@ describe('Duet in Obsidian', () => {
         plugin.settings.profiles.pop();
         await plugin.saveSettings();
       });
-      expect(await commands()).toEqual(['duet:new-conversation-claude', 'duet:new-conversation-codex']);
+      expect(await commands()).toEqual(['duet:yami-new-conversation-claude', 'duet:yami-new-conversation-codex']);
     });
   });
 });

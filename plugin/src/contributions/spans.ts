@@ -1,4 +1,4 @@
-import { applyOps, type TextOp } from 'yami/obsidian';
+import { applyOps, type TextOp } from 'yami/document';
 
 /** Text that a Duet agent wrote, as a character range of the note. */
 export interface Span {

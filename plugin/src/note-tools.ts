@@ -1,6 +1,7 @@
 import type * as Y from 'yjs';
 import { defineTool, type ToolSet, z } from 'yami/agent';
-import { type AgentPeer, diffOps, type SharedNote, type TextOp } from 'yami/obsidian';
+import { diffOps, type TextOp } from 'yami/document';
+import type { AgentPeer, SharedNote } from 'yami/obsidian';
 
 /** Stands for the request line and the reply callout in the text that the agent sees. */
 export const PLACEHOLDER = '⟦request and reply⟧';
@@ -65,6 +66,11 @@ export class NoteTools {
   private seen: Seen | undefined;
 
   constructor(private readonly context: NoteToolContext) {}
+
+  /** For a new session, which has seen nothing of the note. */
+  reset(): void {
+    this.seen = undefined;
+  }
 
   /**
    * Records what the agent sees in a new message, with `hidden` as the request and reply.

@@ -45,7 +45,7 @@ Write `@claude` or `@codex` and a request, then press Enter at the end of the li
 - **Edit the note:** ask for a change, such as `@claude make the list shorter`. The agent changes this note only. It can read your other notes, but it cannot change them or run commands, so a mention never asks for approval.
 - **Follow up:** each note keeps its own conversation. A later `@claude make it shorter` in the same note continues it, also after you restart Obsidian.
 - **Undo the agent:** run **Duet: Undo the agent's last changes in this note**. This removes the edits of the agent's last turn and keeps your own typing and the agent's reply. Cmd+Z or Ctrl+Z undoes only your own typing.
-- **Stop:** run **Duet: Stop the mention agent in this note**. Assign it a hotkey if you use it often.
+- **Stop:** run **Duet: Stop the agent in this note**. Assign it a hotkey if you use it often. While a mention agent works, the status bar says so, for example `claude working in Ideas`. Select it to open the note.
 - **Start over:** run **Duet: Forget the mention conversation in this note**.
 
 Duet ignores tags in code blocks, in blockquotes and in email addresses. These tags stay plain text.
@@ -113,7 +113,7 @@ General settings:
 
 To use a second Claude account, add an agent with the tag `work`, the agent Claude Code, and the environment variable `CLAUDE_CONFIG_DIR=~/.claude-work`.
 
-A change to an agent applies at once: its tag works in mentions, and **Duet: New conversation with work** is in the command palette, with no restart. A change to **Conversation folder** or **Close idle agents after** applies to mentions and to the API at once, and to the conversation commands after you restart Obsidian or turn Duet off and on. **Show agents typing** applies to mentions.
+Each change applies at once, with no restart. A new agent's tag works in mentions, and **Duet: New conversation with work** is in the command palette. A changed agent starts with its new options at the next message; an agent that works finishes its turn first. A new **Conversation folder** applies to the next conversation note, **Close idle agents after** to the next idle wait, and **Show agents typing** to the next edit, in mentions and in conversation notes.
 
 ## API for other plugins
 
@@ -161,8 +161,21 @@ Duet runs on Yami, which every Yami plugin shares. When Duet starts, Yami adds t
 - **Files:** `Yami.base`, a base that lists Yami's modules and sessions; `internal/yami/skills/run/SKILL.md`, the base skill of Yami's sessions; and `internal/wiki/`, the documents of Yami's wiki module (its ledger, its policies, its promises and its ingest skill). Yami never overwrites a file that you edited. You cannot turn these files off.
 - **Folder colors:** `internal/` is gray in the file explorer, and the folders of each module have the module's color.
 - **Commands:** besides the conversation commands, Yami adds commands for sessions (run, resume, stop and kill the session in the editor), for the wiki (search, lint, versions, ingest and more), and **New module**.
-- **Status bar:** an item that says which agents work in conversation notes.
-- **Agent tools and skills:** every agent gets Yami's tools, such as `wiki_search`, and Yami's skills, such as `/wiki:ingest`. A mention agent gets only Duet's note tools.
+- **Status bar:** an item that says which agents work, in mentions and in conversation notes.
+- **Agent tools and skills:** every agent in a conversation note gets Yami's tools, such as `wiki_search`, and Yami's skills, such as `/wiki:ingest`. A mention agent gets only Duet's note tools, and no skills.
+
+### Command ids
+
+Duet now takes its conversation commands from Yami, so their ids changed. If you gave one a hotkey, set it again:
+
+| Command | Before | Now |
+|---|---|---|
+| New conversation with `<tag>` | `duet:new-chat`, `duet:new-chat-<tag>` | `duet:yami-new-conversation-<tag>` |
+| End this conversation | `duet:end-chat` | `duet:yami-end-conversation` |
+| Stop the agent in this note | `duet:stop` | `duet:yami-stop` |
+| Undo the agent's last changes in this note | `duet:revert` | `duet:yami-revert` |
+| Focus the message box | `duet:focus-composer` | `duet:yami-focus-composer` |
+| Forget the mention conversation in this note | `duet:new-conversation` | `duet:forget-mentions` |
 
 ## Network use, accounts and privacy
 

@@ -1,10 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-
-// The Yami layer imports Obsidian, which has no code outside the app.
-// library-loop: F0.5
-vi.mock('obsidian', () => ({ Modal: class {}, SuggestModal: class {}, FuzzySuggestModal: class {} }));
-
-import { applyOps, diffOps } from 'yami/obsidian';
+import { describe, expect, it } from 'vitest';
+import { applyOps, diffOps } from 'yami/document';
 import { agentView, PLACEHOLDER, viewOpsToNote } from '../../../plugin/src/note-tools.ts';
 
 const note = '# Plan\n\nFirst draft, rough.\n@claude clean this up\n> [!agent]+ Claude\n> Working\n\nLast line.';

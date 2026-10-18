@@ -1,18 +1,18 @@
 import type { EditorView } from '@codemirror/view';
-import { MarkdownView, Notice, Plugin, TFile } from 'obsidian';
-import { createYami, type ObsidianYami } from 'yami/obsidian';
+import { MarkdownView, Notice, Plugin, type TFile } from 'obsidian';
+import { createYami, type ObsidianYami, type SessionIds } from 'yami/obsidian';
 import { ProfileAgents } from './agents.ts';
 import type { DuetApi } from './api.ts';
 import { ContributionLedger } from './contributions/ledger.ts';
 import { ContributionLens } from './contributions/lens.ts';
 import { enterTrigger } from './enter-trigger.ts';
 import { mentionTags, tagPostProcessor, type TagStyle } from './mention-tags.ts';
-import { MentionAgents, type SessionIndex } from './mentions.ts';
+import { MentionAgents } from './mentions.ts';
 import { displayName, type DuetSettings, DuetSettingTab, profileNamed, upgradeSettings } from './settings.ts';
 
 interface PluginData {
   settings: DuetSettings;
-  sessions: SessionIndex;
+  sessions: SessionIds;
 }
 
 export default class DuetPlugin extends Plugin {
@@ -24,7 +24,7 @@ export default class DuetPlugin extends Plugin {
   lens!: ContributionLens;
   /** For other plugins: `app.plugins.getPlugin('duet')?.api`. */
   api!: DuetApi;
-  private sessions: SessionIndex = {};
+  private sessions: SessionIds = {};
   private lensButton!: HTMLElement;
 
   async onload(): Promise<void> {
@@ -33,13 +33,15 @@ export default class DuetPlugin extends Plugin {
     this.sessions = data.sessions ?? {};
 
     this.agents = new ProfileAgents(this.app, () => this.settings.profiles);
+    const animate = () => this.settings.animate;
     this.yami = createYami(this, {
       agents: this.agents.entries(),
-      conversationFolder: this.settings.conversationFolder,
-      idleMinutes: this.settings.idleMinutes,
+      conversationFolder: () => this.settings.conversationFolder,
+      idleMinutes: () => this.settings.idleMinutes,
+      animate,
     });
 
-    this.ledger = new ContributionLedger(this.app);
+    this.ledger = new ContributionLedger(this.app, this.yami.hub);
     this.ledger.install(this);
     this.yami.hub.observe(this.ledger);
     this.lens = new ContributionLens(this.app, this.ledger, () => this.settings.lens);
@@ -56,21 +58,22 @@ export default class DuetPlugin extends Plugin {
         if (profile !== undefined && !agent) {
           throw new Error(`Duet has no agent named ${profile}. Agents: ${this.settings.profiles.map((p) => p.name).join(', ')}.`);
         }
-        const folder = options.folder ?? this.settings.conversationFolder;
-        return { path: (await conversations.start({ ...options, folder, agent: agent?.name })).path };
+        return { path: (await conversations.start({ ...options, agent: agent?.name })).path };
       },
       conversationStatus: (path) => conversations.status(path),
       onTurnEnd: (path, callback) => conversations.onTurnEnd(path, callback),
     };
 
-    const animate = () => this.settings.animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    this.mentions = new MentionAgents(this.yami.hub, this.agents, this.sessions, {
-      idleMinutes: () => this.settings.idleMinutes,
-      animate,
-      save: () => this.persist(),
+    const notes = this.yami.noteSessions({
+      ids: this.sessions,
+      save: (ids) => {
+        this.sessions = ids;
+        return this.persist();
+      },
     });
+    // library-loop: F1.3
+    this.mentions = new MentionAgents(this.yami.hub, notes, () => animate() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-    this.addRibbonIcon('message-square-plus', 'New conversation', () => void this.newConversation());
     this.lensButton = this.addRibbonIcon('highlighter', 'Toggle contribution lens', () => void this.toggleLens());
     this.lensButton.addClass('duet-lens-toggle');
     this.lensButton.toggleClass('is-active', this.settings.lens);
@@ -94,18 +97,6 @@ export default class DuetPlugin extends Plugin {
       ),
     );
 
-    // library-loop: F0.4
-    this.addCommand({
-      id: 'stop-mention',
-      name: 'Stop the mention agent in this note',
-      checkCallback: (checking) => {
-        const file = this.activeFile();
-        if (!file || !this.mentions.working.some((working) => working.file === file)) return false;
-        if (!checking) void this.mentions.interrupt(file);
-        return true;
-      },
-    });
-
     this.addCommand({
       id: 'forget-mentions',
       name: 'Forget the mention conversation in this note',
@@ -120,29 +111,20 @@ export default class DuetPlugin extends Plugin {
     });
 
     this.addSettingTab(new DuetSettingTab(this.app, this));
-
-    this.registerEvent(
-      this.app.vault.on('rename', (file, oldPath) => {
-        if (file instanceof TFile) void this.mentions.rename(file, oldPath);
-      }),
-    );
   }
 
   onunload(): void {
-    void this.shutdown();
-  }
-
-  private async shutdown(): Promise<void> {
-    await this.mentions.closeAll();
-    await this.agents.closeAll();
-    await this.ledger.flush();
+    void this.ledger.flush();
   }
 
   async saveSettings(): Promise<void> {
     await this.persist();
-    this.agents.sync(this.yami, this);
+    try {
+      this.yami.setAgents(this.agents.entries());
+    } catch (error) {
+      new Notice(`Duet could not apply the agents: ${(error as Error).message}`);
+    }
     this.refreshEditors();
-    await this.mentions.closeIdle();
   }
 
   async toggleLens(): Promise<void> {
@@ -150,21 +132,6 @@ export default class DuetPlugin extends Plugin {
     this.lensButton.toggleClass('is-active', this.settings.lens);
     this.lens.refresh();
     await this.persist();
-  }
-
-  /** Opens a conversation note with the first agent. */
-  private async newConversation(): Promise<void> {
-    const agent = this.yami.registered[0];
-    if (!agent) {
-      new Notice('Duet has no agents. Add one in the settings.');
-      return;
-    }
-    try {
-      await this.yami.conversations.create(agent);
-    } catch (error) {
-      console.error(error);
-      new Notice(`Duet could not start a conversation: ${(error as Error).message}`, 10_000);
-    }
   }
 
   private tagStyles(): TagStyle[] {
