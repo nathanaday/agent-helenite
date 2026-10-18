@@ -194,14 +194,14 @@ export class DuetSettingTab extends PluginSettingTab {
     }
     if (this.waitingForBlur.has(field)) return;
     this.waitingForBlur.add(field);
-    field.addEventListener(
-      'blur',
-      () => {
-        this.waitingForBlur.delete(field);
-        this.update();
-      },
-      { once: true },
-    );
+    const blurred = () => {
+      // The window lost the focus. The field keeps it for when the window gets it back.
+      if (field.doc.activeElement === field) return;
+      field.removeEventListener('blur', blurred);
+      this.waitingForBlur.delete(field);
+      this.update();
+    };
+    field.addEventListener('blur', blurred);
   }
 
   private agentGroup(profile: AgentProfile, index: number): SettingDefinitionGroup {

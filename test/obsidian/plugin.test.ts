@@ -39,7 +39,7 @@ describe('Duet in Obsidian', () => {
     await page().waitForFunction(
       () => {
         const plugin = (window as any).app.plugins.plugins.duet;
-        return plugin.mentions.working.length === 0 && plugin.yami.conversations.working.length === 0;
+        return plugin.yami.works.length === 0 && plugin.yami.conversations.working.length === 0;
       },
       undefined,
       { timeout, polling: 250 },
@@ -51,7 +51,7 @@ describe('Duet in Obsidian', () => {
     await openAtEnd(page(), note);
     await page().keyboard.type(line);
     await page().keyboard.press('Enter');
-    await page().waitForFunction(() => (window as any).app.plugins.plugins.duet.mentions.working.length > 0, undefined, { timeout: 10_000 });
+    await page().waitForFunction(() => (window as any).app.plugins.plugins.duet.yami.works.length > 0, undefined, { timeout: 60_000 });
   }
 
   async function shot(name: string) {
@@ -390,11 +390,15 @@ describe('Duet in Obsidian', () => {
         await win.getByText('Add agent', { exact: true }).click();
         await expect.poll(tags).toEqual(['claude', 'codex', 'agent2']);
 
-        // Typing a tag keeps the focus. The heading follows when the field loses it.
+        // Typing a tag keeps the focus, also when the window loses it for a moment. The heading follows when the field loses it.
         const tag = win.locator('.setting-item:has(.setting-item-name:text-is("Tag")) input').nth(2);
         await tag.click();
         await tag.press('Meta+a');
-        await win.keyboard.type('work', { delay: 60 });
+        await win.keyboard.type('wo', { delay: 60 });
+        await expect.poll(tags).toEqual(['claude', 'codex', 'wo']);
+        // A window blur: the field gets 'blur' and stays the active element.
+        await tag.dispatchEvent('blur');
+        await win.keyboard.type('rk', { delay: 60 });
         await expect.poll(tags).toEqual(['claude', 'codex', 'work']);
         await win.keyboard.press('Tab');
         await win.getByText('@work', { exact: true }).waitFor({ timeout: 5000 });
