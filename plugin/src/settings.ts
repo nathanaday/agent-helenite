@@ -213,7 +213,7 @@ export class DuetSettingTab extends PluginSettingTab {
           button
             .setIcon('trash')
             .setTooltip(`Remove @${profile.name}`)
-            .onClick(() => void this.removeAgent(index)),
+            .onClick(() => void this.removeAgent(profile)),
       ],
       items: [
         {
@@ -275,8 +275,10 @@ export class DuetSettingTab extends PluginSettingTab {
     this.update();
   }
 
-  private async removeAgent(index: number): Promise<void> {
-    this.plugin.settings.profiles.splice(index, 1);
+  /** By the profile, not its index: Obsidian keeps a group's buttons when the group above it goes. */
+  private async removeAgent(profile: AgentProfile): Promise<void> {
+    const { profiles } = this.plugin.settings;
+    if (profiles.includes(profile)) profiles.splice(profiles.indexOf(profile), 1);
     await this.plugin.saveSettings();
     this.update();
   }

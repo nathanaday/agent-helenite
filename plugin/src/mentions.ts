@@ -1,4 +1,4 @@
-import { type App, Notice, type TFile } from 'obsidian';
+import { Notice, type TFile } from 'obsidian';
 import type * as Y from 'yjs';
 import type { AgentEvent, AgentSession } from 'yami/agent';
 import { activity, type CollabHub, EditorBinding, LiveRegion, type NoteAgent, type NoteSessions, type NoteSessionSetup, type ObsidianYami, Presence, type SessionIds, type SharedNote } from 'yami/obsidian';
@@ -84,7 +84,6 @@ export class MentionAgents {
   private readonly notes: NoteSessions<LiveSession>;
 
   constructor(
-    private readonly app: App,
     private readonly yami: ObsidianYami,
     private readonly options: MentionOptions,
   ) {
@@ -92,10 +91,9 @@ export class MentionAgents {
     this.notes = yami.noteSessions({ ids: options.ids, save: options.save, setup: (note) => this.setup(note) });
   }
 
-  private setup({ path, agent }: NoteAgent): NoteSessionSetup<LiveSession> {
-    const file = this.app.vault.getFileByPath(path);
+  private setup({ file, agent }: NoteAgent): NoteSessionSetup<LiveSession> {
     const profile = this.options.profile(agent);
-    if (!file || !profile) throw new Error(file ? `Duet has no agent named ${agent}.` : `${path} is gone.`);
+    if (!profile) throw new Error(`Duet has no agent named ${agent}.`);
     const live = new LiveSession(profile, file, this.hub, this.yami.animate);
     return {
       options: { instructions: INSTRUCTIONS, access: 'read-only', tools: live.tools.tools, skills: [] },

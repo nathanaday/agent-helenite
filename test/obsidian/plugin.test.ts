@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { Page } from 'playwright-core';
 import { launchObsidian, type ObsidianInstance, openAtEnd } from './harness.ts';
 
 const TIMEOUT = 240_000;
@@ -376,9 +377,10 @@ describe('Duet in Obsidian', () => {
 
   describe('settings', () => {
     const tags = () => page().evaluate(() => (window as any).app.plugins.plugins.duet.settings.profiles.map((p: { name: string }) => p.name) as string[]);
+    const commands = () => page().evaluate(() => Object.keys((window as any).app.commands.commands).filter((id) => id.startsWith('duet:yami-new-conversation-')).sort());
 
-    it('adds, renames and removes an agent in the settings window', { timeout: TIMEOUT }, async () => {
-      // Obsidian opens its settings in a separate window.
+    /** Opens Duet's settings tab, which Obsidian shows in a separate window, and closes it after `use`. */
+    async function inSettings(use: (win: Page) => Promise<void>) {
       const opened = page().context().waitForEvent('page', { timeout: 10_000 });
       await page().evaluate(() => {
         const setting = (window as any).app.setting;
@@ -387,6 +389,14 @@ describe('Duet in Obsidian', () => {
       });
       const win = await opened;
       try {
+        await use(win);
+      } finally {
+        await page().evaluate(() => (window as any).app.setting.close());
+      }
+    }
+
+    it('adds, renames and removes an agent in the settings window', { timeout: TIMEOUT }, async () => {
+      await inSettings(async (win) => {
         await win.getByText('Add agent', { exact: true }).click();
         await expect.poll(tags).toEqual(['claude', 'codex', 'agent2']);
 
@@ -405,26 +415,14 @@ describe('Duet in Obsidian', () => {
 
         await win.locator('[aria-label="Remove @work"]').click();
         await expect.poll(tags).toEqual(['claude', 'codex']);
-      } finally {
-        await page().evaluate(() => (window as any).app.setting.close());
-      }
+      });
     });
 
     it('offers a new agent as a command and a mention tag with no reload', { timeout: TIMEOUT }, async () => {
-      const opened = page().context().waitForEvent('page', { timeout: 10_000 });
-      await page().evaluate(() => {
-        const setting = (window as any).app.setting;
-        setting.open();
-        setting.openTabById('duet');
-      });
-      const win = await opened;
-      try {
+      await inSettings(async (win) => {
         await win.getByText('Add agent', { exact: true }).click();
         await expect.poll(tags).toEqual(['claude', 'codex', 'agent2']);
-      } finally {
-        await page().evaluate(() => (window as any).app.setting.close());
-      }
-      const commands = () => page().evaluate(() => Object.keys((window as any).app.commands.commands).filter((id) => id.startsWith('duet:yami-new-conversation-')).sort());
+      });
       expect(await commands()).toEqual(['duet:yami-new-conversation-agent2', 'duet:yami-new-conversation-claude', 'duet:yami-new-conversation-codex']);
 
       await openAtEnd(page(), 'Welcome.md');
@@ -438,6 +436,61 @@ describe('Duet in Obsidian', () => {
         await plugin.saveSettings();
       });
       expect(await commands()).toEqual(['duet:yami-new-conversation-claude', 'duet:yami-new-conversation-codex']);
+    });
+
+    it('says what to do in an open conversation when every agent is removed, and works again when one is added', { timeout: TIMEOUT }, async () => {
+      // Other conversation notes stay open in tabs behind this one.
+      const box = '.workspace-leaf.mod-active .yami-composer';
+      const saved = await page().evaluate(() => JSON.stringify((window as any).app.plugins.plugins.duet.settings.profiles));
+      try {
+        await page().evaluate(() => (window as any).app.commands.executeCommandById('duet:yami-new-conversation-claude'));
+        await page().waitForSelector(`${box} textarea`, { timeout: 15_000 });
+        await page().focus(`${box} textarea`);
+        await page().keyboard.type('Remember the word fig. Reply with exactly: OK');
+        await page().keyboard.press('Enter');
+        await page().waitForSelector(`${box}.is-working`, { timeout: 10_000 });
+        await idle();
+        const chat = await page().evaluate(() => (window as any).app.workspace.getActiveFile().path as string);
+
+        await inSettings(async (win) => {
+          await win.locator('[aria-label="Remove @claude"]').click();
+          await expect.poll(tags).toEqual(['codex']);
+          await win.locator('[aria-label="Remove @claude"]').waitFor({ state: 'detached', timeout: 5000 });
+          await win.locator('[aria-label="Remove @codex"]').click();
+          await expect.poll(tags).toEqual([]);
+        });
+        await page().waitForSelector(`${box}.is-unavailable`, { timeout: 5000 });
+        expect(await page().textContent(`${box} .yami-unavailable`)).toBe('Duet has no agents. Add one in its settings.');
+        expect(await commands()).toEqual([]);
+        const question = 'Which word did I ask you to remember? Reply with the word only.';
+        await page().focus(`${box} textarea`);
+        await page().keyboard.type(question);
+        await page().keyboard.press('Enter');
+        await page().waitForTimeout(500);
+        expect(await page().inputValue(`${box} textarea`)).toBe(question);
+        expect(await page().$(`${box}.is-working`)).toBeNull();
+        expect(await obsidian.waitForNote(chat, () => true)).not.toContain(question);
+        await shot('no-agents');
+
+        await inSettings(async (win) => {
+          await win.getByText('Add agent', { exact: true }).click();
+          await expect.poll(tags).toEqual(['agent2']);
+        });
+        await page().waitForSelector(`${box}:not(.is-unavailable)`, { timeout: 5000 });
+        expect(await commands()).toEqual(['duet:yami-new-conversation-agent2']);
+        await page().focus(`${box} textarea`);
+        await page().keyboard.press('Enter');
+        await page().waitForSelector(`${box}.is-working`, { timeout: 10_000 });
+        await idle();
+        // The new agent continues the note's harness session, so it knows the word.
+        expect(await obsidian.waitForNote(chat, () => true)).toMatch(/\nfig\.?\n\n$/i);
+      } finally {
+        await page().evaluate(async (profiles) => {
+          const plugin = (window as any).app.plugins.plugins.duet;
+          plugin.settings.profiles = JSON.parse(profiles);
+          await plugin.saveSettings();
+        }, saved);
+      }
     });
   });
 });

@@ -63,7 +63,7 @@ export default class DuetPlugin extends Plugin {
       onTurnEnd: (path, callback) => conversations.onTurnEnd(path, callback),
     };
 
-    this.mentions = new MentionAgents(this.app, this.yami, {
+    this.mentions = new MentionAgents(this.yami, {
       ids: this.sessions,
       save: (ids) => {
         this.sessions = ids;

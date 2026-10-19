@@ -115,6 +115,8 @@ To use a second Claude account, add an agent with the tag `work`, the agent Clau
 
 Each change applies at once, with no restart. A new agent's tag works in mentions, and **Duet: New conversation with work** is in the command palette. A changed agent starts with its new options at the next message; an agent that works finishes its turn first. A new **Conversation folder** applies to the next conversation note, **Close idle agents after** to the next idle wait, and **Show agents typing** to the next edit, in mentions and in conversation notes.
 
+When you remove every agent, an open conversation note says **Duet has no agents. Add one in its settings.** and keeps what you type, but sends nothing. A turn that runs finishes first. When you add an agent again, the note takes messages at once, with no restart, and continues its conversation when the new agent's program still has it.
+
 ## API for other plugins
 
 Another Obsidian plugin can start a Duet conversation and follow it. For the types, copy [`plugin/src/api.ts`](plugin/src/api.ts) into your plugin. It imports nothing.
