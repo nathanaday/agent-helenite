@@ -80,8 +80,8 @@ describe('Duet in Obsidian', () => {
 
     it('answers a mention in a callout under the line, with a live cursor', { timeout: TIMEOUT }, async () => {
       await mention('Ideas.md', '@claude Reply with exactly the word: pineapple');
-      await page().waitForSelector('.yami-caret', { timeout: 30_000 });
-      expect(await page().textContent('.yami-caret-flag')).toContain('claude');
+      await page().waitForSelector('.workspace-leaf.mod-active .yami-caret', { timeout: 30_000 });
+      expect(await page().textContent('.workspace-leaf.mod-active .yami-caret-name')).toBe('claude');
       await idle();
       const text = await obsidian.waitForNote('Ideas.md', () => true);
       expect(text).toMatch(/@claude Reply with exactly the word: pineapple\n> \[!agent\]\+ Claude\n> pineapple\.?\n\n$/i);
@@ -108,7 +108,7 @@ describe('Duet in Obsidian', () => {
       const typed = 'I keep typing this sentence while the agent edits the list above.';
       await mention('Ideas.md', '@claude Rewrite each bullet of the list at the top so it is at most eight words. Then reply with: Done.');
       const typing = page().keyboard.type(typed, { delay: 70 });
-      await page().waitForSelector('.yami-fresh', { timeout: 90_000 });
+      await page().waitForSelector('.workspace-leaf.mod-active .yami-fresh', { timeout: 90_000 });
       await shot('edit');
       await typing;
       await idle();
@@ -286,20 +286,30 @@ describe('Duet in Obsidian', () => {
     it('shows the agent\'s questions in the message box and sends the answers', { timeout: TIMEOUT }, async () => {
       const chat = await activePath();
       await send('Make one AskUserQuestion tool call with two questions: first which fruit to add, with the options Apple and Pear; then which color, with the options Red and Green. Then reply with only my two answers in capitals, separated by one space.');
-      await page().waitForSelector(`${box}.has-approval .yami-questions`, { timeout: 90_000 });
+      const form = `${box}.has-approval .yami-approval .yami-questions`;
+      const question = `${form} .yami-question:not([hidden])`;
+      const submit = `${form} button[type="submit"]`;
+      await page().waitForSelector(form, { timeout: 90_000 });
       expect(await page().textContent(`${box} .yami-approval`)).toContain('claude asks you');
-      const visible = () => page().$$eval('.yami-question', (sets) => sets.filter((set) => !(set as HTMLElement).hidden).map((set) => set.textContent));
       // One question at a time; picking an option moves to the next one.
-      expect(await visible()).toEqual([expect.stringContaining('Pear')]);
-      expect(await page().textContent('.yami-question-progress')).toBe('1 of 2');
-      expect(await page().isDisabled('.yami-questions button[type=submit]')).toBe(true);
+      expect(await page().$$(question)).toHaveLength(1);
+      expect(await page().textContent(question)).toContain('Pear');
+      expect(await page().textContent(`${form} .yami-question-progress`)).toBe('1 of 2');
+      expect(await page().isDisabled(submit)).toBe(true);
+      expect(await page().isHidden(`${form} button[data-action="back"]`)).toBe(true);
       await shot('question');
-      await page().click('.yami-question:not([hidden]) .yami-question-option:has-text("Pear")');
-      await page().waitForFunction(() => document.querySelector('.yami-question-progress')?.textContent === '2 of 2');
-      expect(await visible()).toEqual([expect.stringContaining('Green')]);
-      expect(await page().textContent('.yami-questions button[type=submit]')).toContain('Answer');
+      await page().click(`${question} .yami-question-option:has(.yami-question-label:text-is("Pear"))`);
+      await page().waitForSelector(`${form} .yami-question-progress:text-is("2 of 2")`);
+      expect(await page().textContent(question)).toContain('Green');
+      expect(await page().textContent(submit)).toContain('Answer');
+      // Back shows the first question with its answer kept; Next returns.
+      await page().click(`${form} button[data-action="back"]`);
+      await page().waitForSelector(`${form} .yami-question-progress:text-is("1 of 2")`);
+      expect(await page().isEnabled(submit)).toBe(true);
+      await page().click(submit);
+      await page().waitForSelector(`${form} .yami-question-progress:text-is("2 of 2")`);
       // An answer of the user's own, sent with Enter.
-      await page().click('.yami-question:not([hidden]) .yami-question-other');
+      await page().click(`${question} input.yami-question-other`);
       await page().keyboard.type('Blue');
       await page().keyboard.press('Enter');
       await page().waitForSelector(`${box}:not(.has-approval)`, { timeout: 10_000 });
