@@ -47,6 +47,8 @@ An editor extension shows each `@name` tag of a configured agent as a pill in th
 
 A plugin such as Atlas starts a Duet conversation through `plugin.api` instead of running its own agents. `plugin/src/api.ts` holds the types and imports nothing, so another plugin can copy it. The `profile` option names a Duet agent by its tag, in any letter case; Duet passes the registered agent to `yami.conversations.start`, which creates the note and sends the first message. Yami reads the conversation folder setting at each call.
 
+Duet passes each call to `yami.conversations`, which gives these guarantees:
+
 - **The path is final at once.** The note is named when it is created, from `title` or from the message, so the first message does not rename it.
 - **Status without a race.** The conversation is `working` when `newConversation` resolves. When a turn ends with a message in the queue, the next turn starts before the listeners run, so a listener sees `working`.
 - **Listeners follow the note.** `onTurnEnd` keeps listeners by `TFile`, so a rename keeps them. An error in a listener goes to the console and does not stop the turn.
