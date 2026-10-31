@@ -1,0 +1,15 @@
+version: 1
+suites:
+  all:
+    command: cd obsidian-duet && npm run typecheck && npx vitest run test/unit --reporter=default --reporter=junit --outputFile=/hikari/private/reports/all.xml
+    description: Typecheck and every unit test of the partition.
+tests:
+  obsidian-duet/test/unit/plugin/callout.test.ts: ["[[answer-mention]]"]
+  obsidian-duet/test/unit/plugin/mention.test.ts: ["[[answer-mention]]", "[[highlight-agent-tags]]"]
+  obsidian-duet/test/unit/plugin/note-tools.test.ts: ["[[edit-note-from-mention]]"]
+  obsidian-duet/test/unit/plugin/contributions.test.ts: ["[[track-contributions]]"]
+  obsidian-duet/test/unit/version.test.ts: []
+gaps:
+  start-conversation-from-plugin: [No unit test.]
+  configure-agents: [No unit test.]
+  show-contribution-lens: [Only covered by Obsidian tests, not run here.]

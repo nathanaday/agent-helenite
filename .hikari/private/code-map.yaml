@@ -1,0 +1,33 @@
+version: 1
+parts:
+  - path: obsidian-duet/scripts/
+    description: Build, version and dev-vault scripts, lint config, screenshots.
+  - path: obsidian-duet/test/obsidian/
+    description: End-to-end tests against the Obsidian desktop app (not run here).
+  - path: obsidian-duet/docs/
+    description: Design notes and images.
+  - path: obsidian-duet/plugin/src/main.ts
+    description: Plugin entry; wires yami, ledger, lens, commands.
+  - path: obsidian-duet/plugin/src/text.ts
+    description: Text helper.
+  - path: obsidian-duet/plugin/styles.css
+    description: Plugin styles.
+features:
+  answer-mention:
+    code: [obsidian-duet/plugin/src/mentions.ts, obsidian-duet/plugin/src/enter-trigger.ts, obsidian-duet/plugin/src/mention.ts, obsidian-duet/plugin/src/callout.ts]
+    notes: MentionAgents.ask; findTags in mention.ts.
+  edit-note-from-mention:
+    code: [obsidian-duet/plugin/src/note-tools.ts]
+  mention-conversation:
+    code: [obsidian-duet/plugin/src/mentions.ts]
+  highlight-agent-tags:
+    code: [obsidian-duet/plugin/src/mention-tags.ts, obsidian-duet/plugin/src/mention.ts]
+  configure-agents:
+    code: [obsidian-duet/plugin/src/settings.ts, obsidian-duet/plugin/src/agents.ts]
+  track-contributions:
+    code: [obsidian-duet/plugin/src/contributions/ledger.ts, obsidian-duet/plugin/src/contributions/spans.ts]
+  show-contribution-lens:
+    code: [obsidian-duet/plugin/src/contributions/lens.ts]
+  start-conversation-from-plugin:
+    code: [obsidian-duet/plugin/src/api.ts]
+    notes: api object is built in main.ts onload.
