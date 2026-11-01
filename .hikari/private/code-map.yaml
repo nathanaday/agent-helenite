@@ -27,5 +27,5 @@ features:
   show-contribution-lens:
     code: [obsidian-duet/plugin/src/contributions/lens.ts]
   start-conversation-from-plugin:
-    code: [obsidian-duet/plugin/src/api.ts]
+    code: [obsidian-duet/plugin/src/api.ts, obsidian-duet/plugin/src/main.ts, obsidian-duet/test/obsidian/plugin.test.ts]
     notes: api object is built in main.ts onload.
