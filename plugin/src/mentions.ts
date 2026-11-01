@@ -88,7 +88,7 @@ export class MentionAgents {
     private readonly options: MentionOptions,
   ) {
     this.hub = yami.hub;
-    this.notes = yami.noteSessions({ ids: options.ids, save: options.save, setup: (note) => this.setup(note) });
+    this.notes = yami.noteSessions({ ids: options.ids, save: (ids) => options.save(ids), setup: (note) => this.setup(note) });
   }
 
   private setup({ file, agent }: NoteAgent): NoteSessionSetup<LiveSession> {

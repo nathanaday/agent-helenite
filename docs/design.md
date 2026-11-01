@@ -45,7 +45,7 @@ An editor extension shows each `@name` tag of a configured agent as a pill in th
 
 ## API for other plugins
 
-A plugin such as Atlas starts a Duet conversation through `plugin.api` instead of running its own agents. `plugin/src/api.ts` holds the types and imports nothing, so another plugin can copy it. The `profile` option names a Duet agent by its tag, in any letter case; Duet passes the registered agent to `yami.conversations.start`, which creates the note and sends the first message. Yami reads the conversation folder setting at each call.
+A plugin such as Atlas starts a Duet conversation through `plugin.api` instead of running its own agents. `plugin/src/api.ts` declares `DuetApi` (version 2) and takes the option and result types from `yami/obsidian`; another plugin installs yami for them or copies `dist/obsidian/api.d.ts`. Version 2 renamed the `profile` option to `agent`, and a call that passes `profile` is refused with an error that names `agent`. The `agent` option names a Duet agent by its tag, in any letter case; Duet passes the registered agent to `yami.conversations.start`, which creates the note and sends the first message. Yami reads the conversation folder setting at each call.
 
 Duet passes each call to `yami.conversations`, which gives these guarantees:
 

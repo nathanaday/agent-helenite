@@ -15,7 +15,7 @@
     "set-version": "node scripts/set-version.mjs"
   },
   "dependencies": {
-    "yami": "file:../yami/yami"
+    "yami": "https://github.com/nathanaday/yami/releases/download/yami-0.19.0/yami-0.19.0.tgz"
   },
   "devDependencies": {
     "@codemirror/language": "^6.12.4",

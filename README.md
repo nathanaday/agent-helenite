@@ -119,13 +119,13 @@ When you remove every agent, an open conversation note says **Duet has no agents
 
 ## API for other plugins
 
-Another Obsidian plugin can start a Duet conversation and follow it. For the types, copy [`plugin/src/api.ts`](plugin/src/api.ts) into your plugin. It imports nothing.
+Another Obsidian plugin can start a Duet conversation and follow it. For the types, install `yami` and import `NewConversationOptions`, `ConversationStatus` and `TurnEnd` from `yami/obsidian`, or copy the declarations from `dist/obsidian/api.d.ts` in the package. [`plugin/src/api.ts`](plugin/src/api.ts) declares `DuetApi`.
 
 ```ts
 import type { DuetApi } from './duet-api';
 
 const duet = (this.app as any).plugins.getPlugin('duet')?.api as DuetApi | undefined;
-if (duet && duet.version >= 1) {
+if (duet && duet.version >= 2) {
   const { path } = await duet.newConversation({ message: '/my-plugin:my-skill' });
   const stop = duet.onTurnEnd(path, (turn) => console.log(turn.status));
 }
@@ -133,7 +133,7 @@ if (duet && duet.version >= 1) {
 
 | Member | What it does |
 |---|---|
-| `version` | `1`. A later version only adds members. |
+| `version` | `2`. Version 2 renamed the option `profile` of `newConversation` to `agent`. A later version only adds members. |
 | `newConversation(options)` | Creates a conversation note, opens it in a new tab, and sends `options.message` as the first message. Resolves with `{ path }` when the message is sent. |
 | `conversationStatus(path)` | `working`, `active` (waits for a message), `ended`, or `none` (no conversation note has this path). |
 | `onTurnEnd(path, callback)` | Calls `callback` with `{ path, status, text?, error? }` after each turn. `text` is the agent's final message. `status` is `completed`, `interrupted` or `failed`. Returns a function that stops the calls. |
@@ -143,7 +143,8 @@ Options of `newConversation`:
 | Option | Default | What it does |
 |---|---|---|
 | `message` | (required) | The first message. A `/` command runs an agent command, such as a Claude Code skill. |
-| `profile` | the first agent | The tag of a Duet agent, without `@`. |
+| `agent` | the first agent | The tag of a Duet agent, with or without `@`. |
+| `module` | none | The module session document that the conversation runs, as a vault path. |
 | `title` | the date and the first words of the message | The name of the note. |
 | `folder` | the conversation folder setting | The folder of the note. |
 | `open` | `true` | `false` creates the note without opening it. |
@@ -151,7 +152,7 @@ Options of `newConversation`:
 Limits:
 
 - `api` is undefined when Duet is not installed or is turned off. Get it each time you need it. After Duet turns off, `newConversation` on an old `api` rejects.
-- `newConversation` rejects when the message is empty or when no agent has the tag in `profile`.
+- `newConversation` rejects when the message is empty or when no agent has the tag in `agent`. A call that still passes `profile` (version 1) is refused with an error that names `agent`.
 - When the agent cannot start, Duet shows a notice, and the turn ends with the status `failed`.
 - The agent asks for approval and asks its questions as in other conversations: in the message box when the note is open, otherwise in a dialog.
 - A listener follows its note when the user renames it. `conversationStatus` takes the current path.
@@ -216,7 +217,7 @@ Work happens on the `preview` branch. `main` takes changes only through a pull r
 
 Obsidian reads `manifest.json` from `main`. Until the release job ends, about a minute, `main` names a version with no release, and an install in that minute fails once.
 
-Duet is built on [Yami](https://github.com/nathanaday/yami). `createYami` from `yami/obsidian` gives Duet the shared documents, the conversation notes with their commands, the approval prompts and the status bar, and `yami/esbuild` gives the bundle options and the stylesheet. Duet adds the mentions, the agent profiles and the settings, the contribution ledger and the lens, and `plugin.api`. `package.json` links `yami` from a checkout of Yami next to this repository (`../yami`). The design notes are in [docs/design.md](docs/design.md).
+Duet is built on [Yami](https://github.com/nathanaday/yami). `createYami` from `yami/obsidian` gives Duet the shared documents, the conversation notes with their commands, the approval prompts and the status bar, and `yami/esbuild` gives the bundle options and the stylesheet. Duet adds the mentions, the agent profiles and the settings, the contribution ledger and the lens, and `plugin.api`. `package.json` takes `yami` from a release of the library (the `.tgz` of its GitHub release), so `npm install` needs no checkout of Yami. The design notes are in [docs/design.md](docs/design.md).
 
 ## License
 

@@ -8,8 +8,6 @@ parts:
     description: Design notes and images.
   - path: obsidian-duet/plugin/src/main.ts
     description: Plugin entry; wires yami, ledger, lens, commands.
-  - path: obsidian-duet/plugin/src/text.ts
-    description: Text helper.
   - path: obsidian-duet/plugin/styles.css
     description: Plugin styles.
 features:

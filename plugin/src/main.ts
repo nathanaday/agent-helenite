@@ -51,11 +51,12 @@ export default class DuetPlugin extends Plugin {
 
     const { conversations } = this.yami;
     this.api = {
-      version: 1,
-      newConversation: async ({ profile, ...options }) => {
-        const agent = profile === undefined ? undefined : profileNamed(this.settings.profiles, profile);
-        if (profile !== undefined && !agent) {
-          throw new Error(`Duet has no agent named ${profile}. Agents: ${this.settings.profiles.map((p) => p.name).join(', ')}.`);
+      version: 2,
+      newConversation: async ({ agent: name, ...options }) => {
+        if ('profile' in options) throw new Error('Duet API version 2 renamed the option `profile` to `agent`.');
+        const agent = name === undefined ? undefined : profileNamed(this.settings.profiles, name);
+        if (name !== undefined && !agent) {
+          throw new Error(`Duet has no agent named ${name}. Agents:${this.settings.profiles.map((p) => p.name).join(', ')}.`);
         }
         return { path: (await conversations.start({ ...options, agent: agent?.name })).path };
       },
