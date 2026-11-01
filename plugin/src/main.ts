@@ -56,7 +56,7 @@ export default class DuetPlugin extends Plugin {
         if ('profile' in options) throw new Error('Duet API version 2 renamed the option `profile` to `agent`.');
         const agent = name === undefined ? undefined : profileNamed(this.settings.profiles, name);
         if (name !== undefined && !agent) {
-          throw new Error(`Duet has no agent named ${name}. Agents:${this.settings.profiles.map((p) => p.name).join(', ')}.`);
+          throw new Error(`Duet has no agent named ${name}. Agents: ${this.settings.profiles.map((p) => p.name).join(', ')}.`);
         }
         return { path: (await conversations.start({ ...options, agent: agent?.name })).path };
       },

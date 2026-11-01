@@ -374,7 +374,7 @@ describe('Duet in Obsidian', () => {
         return { version: api.version, path, working, turn, after: api.conversationStatus(path), active: app.workspace.getActiveFile()?.path };
       });
       expect(result).toEqual({
-        version: 1,
+        version: 2,
         path: 'Agents/From another plugin.md',
         working: 'working',
         turn: { path: 'Agents/From another plugin.md', status: 'completed', text: expect.stringMatching(/plum/i) },
