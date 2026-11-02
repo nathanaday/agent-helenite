@@ -1,9 +1,6 @@
 import { type App, normalizePath, type Plugin, TFile } from 'obsidian';
-import type * as Y from 'yjs';
-import { AgentPeer } from '../collab/agent-peer.ts';
-import type { DiskWriter, HubObserver } from '../collab/hub.ts';
-import type { SharedNote } from '../collab/shared-note.ts';
-import { applyOps, deltaOps, diffOps } from '../collab/text-ops.ts';
+import { diffOps } from 'yami/document';
+import type { DiskWriter, HubObserver, NoteChange, SharedNote } from 'yami/obsidian';
 import { applyChange, type Contributions, mapSpans, reconcile, type Span } from './spans.ts';
 
 /** Folder of the ledger files, in the vault. One JSON file for each note, at the note's path. */
@@ -16,6 +13,12 @@ interface LedgerFile {
   /** The note text that the spans refer to. */
   text: string;
   spans: Span[];
+}
+
+/** A shared note that the ledger follows, and the record's queue. */
+interface SharedEntry {
+  live: boolean;
+  queue: Promise<NoteRecord | undefined>;
 }
 
 class NoteRecord {
@@ -41,6 +44,7 @@ export class ContributionLedger implements HubObserver {
   private readonly records = new Map<string, Promise<NoteRecord | undefined>>();
   private readonly saves = new Map<NoteRecord, number>();
   private readonly listeners = new Set<(path: string) => void>();
+  private readonly attached = new Map<SharedNote, SharedEntry>();
 
   constructor(private readonly app: App) {}
 
@@ -78,47 +82,47 @@ export class ContributionLedger implements HubObserver {
 
   /** Records the changes of a shared note until the returned function runs. */
   shared(note: SharedNote): () => void {
-    // The text that the queued changes apply to. Changes queue until the record has loaded.
-    let text = note.content;
-    let queue = this.load(note.path).then((record) => {
-      if (record) {
-        record.attached++;
-        record.contributions = reconcile(record.contributions, text, diffOps);
-      }
-      return record;
-    });
-    let attached = true;
-    const observer = (event: Y.YTextEvent, transaction: Y.Transaction) => {
-      const ops = deltaOps(event.delta);
-      if (!ops.length) return;
-      const before = text;
-      text = applyOps(text, ops);
-      const peer = AgentPeer.of(transaction.origin);
-      const agent = peer && { name: peer.identity.name, time: new Date().toISOString() };
-      queue = queue.then((found) => {
-        if (!found && !agent) return found;
-        const record = found ?? this.add(note.path, { text: before, spans: [] }, attached);
-        record.contributions = applyChange(record.contributions, ops, agent);
-        this.changed(record);
+    // The queued changes apply to the text at this moment, so the record catches up to it first.
+    const text = note.content;
+    const entry: SharedEntry = {
+      live: true,
+      queue: this.load(note.path).then((record) => {
+        if (record) {
+          record.attached++;
+          record.contributions = reconcile(record.contributions, text, diffOps);
+        }
         return record;
-      });
+      }),
     };
-    note.text.observe(observer);
+    this.attached.set(note, entry);
     return () => {
-      note.text.unobserve(observer);
-      attached = false;
-      queue = queue.then((record) => {
+      this.attached.delete(note);
+      entry.live = false;
+      entry.queue = entry.queue.then((record) => {
         if (record) record.attached = Math.max(0, record.attached - 1);
         return record;
       });
     };
   }
 
+  changed({ note, path, ops, before, agent }: NoteChange): void {
+    const entry = this.attached.get(note);
+    if (!entry || !ops.length) return;
+    const author = agent && { name: agent.name, time: new Date().toISOString() };
+    entry.queue = entry.queue.then((found) => {
+      if (!found && !author) return found;
+      const record = found ?? this.add(path, { text: before, spans: [] }, entry.live);
+      record.contributions = applyChange(record.contributions, ops, author);
+      this.recorded(record);
+      return record;
+    });
+  }
+
   /** A note that an agent created with its own tools is the agent's from the start. */
   created(file: TFile, text: string, writer: DiskWriter): void {
     if (!text) return;
     const record = this.add(file.path, { text, spans: [{ from: 0, to: text.length, agent: writer.name, time: new Date().toISOString() }] }, false);
-    this.changed(record);
+    this.recorded(record);
   }
 
   /** Writes the records that wait to be saved. */
@@ -138,7 +142,7 @@ export class ContributionLedger implements HubObserver {
     return record;
   }
 
-  private changed(record: NoteRecord): void {
+  private recorded(record: NoteRecord): void {
     this.scheduleSave(record);
     for (const listener of this.listeners) listener(record.path);
   }

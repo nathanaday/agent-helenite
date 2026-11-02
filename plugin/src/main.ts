@@ -1,34 +1,30 @@
 import type { EditorView } from '@codemirror/view';
-import { MarkdownView, Notice, Plugin, TFile } from 'obsidian';
+import { MarkdownView, Notice, Plugin, type TFile } from 'obsidian';
+import { createYami, type ObsidianYami, type SessionIds } from 'yami/obsidian';
+import { ProfileAgents } from './agents.ts';
 import type { DuetApi } from './api.ts';
-import { bindingPlugin } from './collab/binding.ts';
-import { CollabHub } from './collab/hub.ts';
-import { presenceExtensions } from './collab/presence.ts';
 import { ContributionLedger } from './contributions/ledger.ts';
 import { ContributionLens } from './contributions/lens.ts';
-import { ConversationManager } from './conversation/manager.ts';
 import { enterTrigger } from './enter-trigger.ts';
 import { mentionTags, tagPostProcessor, type TagStyle } from './mention-tags.ts';
-import { MentionAgents, type SessionIndex } from './mentions.ts';
-import { PermissionPrompts } from './permission-modal.ts';
+import { MentionAgents } from './mentions.ts';
 import { displayName, type DuetSettings, DuetSettingTab, profileNamed, upgradeSettings } from './settings.ts';
 
 interface PluginData {
   settings: DuetSettings;
-  sessions: SessionIndex;
+  sessions: SessionIds;
 }
 
 export default class DuetPlugin extends Plugin {
   declare settings: DuetSettings;
-  hub!: CollabHub;
+  yami!: ObsidianYami;
+  agents!: ProfileAgents;
   mentions!: MentionAgents;
-  conversations!: ConversationManager;
   ledger!: ContributionLedger;
   lens!: ContributionLens;
   /** For other plugins: `app.plugins.getPlugin('duet')?.api`. */
   api!: DuetApi;
-  private sessions: SessionIndex = {};
-  private statusEl!: HTMLElement;
+  private sessions: SessionIds = {};
   private lensButton!: HTMLElement;
 
   async onload(): Promise<void> {
@@ -36,50 +32,47 @@ export default class DuetPlugin extends Plugin {
     this.settings = upgradeSettings(data.settings);
     this.sessions = data.sessions ?? {};
 
-    const animate = () => this.settings.animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    this.hub = new CollabHub(this.app);
-    this.hub.install(this, [bindingPlugin, presenceExtensions]);
+    this.agents = new ProfileAgents(this.app, () => this.settings.profiles);
+    this.yami = createYami(this, {
+      agents: this.agents.entries(),
+      conversationFolder: () => this.settings.conversationFolder,
+      idleMinutes: () => this.settings.idleMinutes,
+      animate: () => this.settings.animate,
+    });
 
     this.ledger = new ContributionLedger(this.app);
     this.ledger.install(this);
-    this.hub.observe(this.ledger);
+    this.yami.hub.observe(this.ledger);
     this.lens = new ContributionLens(this.app, this.ledger, () => this.settings.lens);
     this.ledger.onChange((path) => this.lens.refresh(path));
     this.registerEditorExtension([this.lens.extension(), mentionTags(() => this.tagStyles())]);
     this.registerMarkdownPostProcessor(this.lens.postProcessor);
     this.registerMarkdownPostProcessor(tagPostProcessor(() => this.tagStyles()));
 
-    const prompts = new PermissionPrompts(this.app);
-    this.conversations = new ConversationManager(this.app, this.hub, prompts, {
-      profiles: () => this.settings.profiles,
-      folder: () => this.settings.conversationFolder,
-      animate,
-      idleMinutes: () => this.settings.idleMinutes,
-      onActivity: () => this.updateStatus(),
-    });
-    this.conversations.install(this);
+    const { conversations } = this.yami;
     this.api = {
-      version: 1,
-      newConversation: async (options) => ({ path: (await this.conversations.start(options)).path }),
-      conversationStatus: (path) => this.conversations.status(path),
-      onTurnEnd: (path, callback) => this.conversations.onTurnEnd(path, callback),
+      version: 2,
+      newConversation: async ({ agent: name, ...options }) => {
+        if ('profile' in options) throw new Error('Duet API version 2 renamed the option `profile` to `agent`.');
+        const agent = name === undefined ? undefined : profileNamed(this.settings.profiles, name);
+        if (name !== undefined && !agent) {
+          throw new Error(`Duet has no agent named ${name}. Agents: ${this.settings.profiles.map((p) => p.name).join(', ')}.`);
+        }
+        return { path: (await conversations.start({ ...options, agent: agent?.name })).path };
+      },
+      conversationStatus: (path) => conversations.status(path),
+      onTurnEnd: (path, callback) => conversations.onTurnEnd(path, callback),
     };
 
-    this.mentions = new MentionAgents(this.app, this.hub, this.sessions, prompts, {
-      idleMinutes: () => this.settings.idleMinutes,
-      animate,
-      save: () => this.persist(),
-      onActivity: () => this.updateStatus(),
+    this.mentions = new MentionAgents(this.yami, {
+      ids: this.sessions,
+      save: (ids) => {
+        this.sessions = ids;
+        return this.persist();
+      },
+      profile: (name) => this.profile(name),
     });
 
-    this.statusEl = this.addStatusBarItem();
-    this.statusEl.addClass('duet-status');
-    this.statusEl.addEventListener('click', () => {
-      const working = this.working()[0];
-      if (working) void this.app.workspace.getLeaf(false).openFile(working.file);
-    });
-
-    this.addRibbonIcon('message-square-plus', 'New conversation', () => void this.conversations.create(this.settings.profiles[0]!));
     this.lensButton = this.addRibbonIcon('highlighter', 'Toggle contribution lens', () => void this.toggleLens());
     this.lensButton.addClass('duet-lens-toggle');
     this.lensButton.toggleClass('is-active', this.settings.lens);
@@ -88,40 +81,6 @@ export default class DuetPlugin extends Plugin {
       name: 'Toggle contribution lens',
       callback: () => void this.toggleLens(),
     });
-    this.addCommand({
-      id: 'new-chat',
-      name: 'New conversation',
-      callback: () => void this.conversations.create(this.settings.profiles[0]!),
-    });
-    for (const profile of this.settings.profiles.slice(1)) {
-      this.addCommand({
-        id: `new-chat-${profile.name}`,
-        name: `New conversation with ${displayName(profile)}`,
-        callback: () => void this.conversations.create(profile),
-      });
-    }
-    this.addCommand({
-      id: 'end-chat',
-      name: 'End this conversation',
-      checkCallback: (checking) => {
-        const file = this.activeFile();
-        const controller = file && this.conversations.controller(file);
-        if (!controller || controller.ended) return false;
-        if (!checking) void controller.end();
-        return true;
-      },
-    });
-    this.addCommand({
-      id: 'focus-composer',
-      name: 'Focus the message box',
-      checkCallback: (checking) => {
-        const composer = this.conversations.activeComposer();
-        if (!composer) return false;
-        if (!checking) composer.focus();
-        return true;
-      },
-    });
-    this.updateStatus();
 
     this.registerEditorExtension(
       enterTrigger(
@@ -138,39 +97,7 @@ export default class DuetPlugin extends Plugin {
     );
 
     this.addCommand({
-      id: 'stop',
-      name: 'Stop the agent in this note',
-      checkCallback: (checking) => {
-        const file = this.activeFile();
-        if (!file) return false;
-        if (!checking) {
-          const controller = this.conversations.controller(file);
-          if (controller?.working) {
-            void controller.interrupt();
-            return true;
-          }
-          void this.mentions.interrupt(file).then((count) => {
-            if (!count) new Notice('No agent is working in this note.');
-          });
-        }
-        return true;
-      },
-    });
-
-    this.addCommand({
-      id: 'revert',
-      name: "Undo the agent's last changes in this note",
-      checkCallback: (checking) => {
-        const file = this.activeFile();
-        const note = file && this.hub.get(file.path);
-        if (!note?.agentUndo.canUndo()) return false;
-        if (!checking) this.mentions.revert(note);
-        return true;
-      },
-    });
-
-    this.addCommand({
-      id: 'new-conversation',
+      id: 'forget-mentions',
       name: 'Forget the mention conversation in this note',
       checkCallback: (checking) => {
         const file = this.activeFile();
@@ -183,29 +110,20 @@ export default class DuetPlugin extends Plugin {
     });
 
     this.addSettingTab(new DuetSettingTab(this.app, this));
-
-    this.registerEvent(
-      this.app.vault.on('rename', (file, oldPath) => {
-        if (file instanceof TFile) void this.mentions.rename(file, oldPath);
-      }),
-    );
   }
 
   onunload(): void {
-    void this.shutdown();
-  }
-
-  private async shutdown(): Promise<void> {
-    await this.conversations.destroy();
-    await this.mentions.closeAll();
-    this.hub.destroy();
-    await this.ledger.flush();
+    void this.ledger.flush();
   }
 
   async saveSettings(): Promise<void> {
     await this.persist();
+    try {
+      this.yami.setAgents(this.agents.entries());
+    } catch (error) {
+      new Notice(`Duet could not apply the agents: ${(error as Error).message}`);
+    }
     this.refreshEditors();
-    await this.mentions.closeIdle();
   }
 
   async toggleLens(): Promise<void> {
@@ -236,20 +154,5 @@ export default class DuetPlugin extends Plugin {
 
   private activeFile(): TFile | undefined {
     return this.app.workspace.getActiveViewOfType(MarkdownView)?.file ?? undefined;
-  }
-
-  private working(): { name: string; file: TFile }[] {
-    return [
-      ...this.mentions.working,
-      ...this.conversations.working.map((controller) => ({ name: controller.agentName, file: controller.file })),
-    ];
-  }
-
-  private updateStatus(): void {
-    if (!this.statusEl) return;
-    const working = this.working();
-    const text = working.length === 1 ? `${working[0]!.name} working in ${working[0]!.file.basename}` : working.length ? `${working.length} agents working` : '';
-    this.statusEl.setText(text);
-    this.statusEl.toggleClass('is-working', working.length > 0);
   }
 }

@@ -80,7 +80,7 @@ async function mentionReply(): Promise<void> {
 
 /** A conversation note, then an approval and a live edit of an open note. */
 async function conversation(): Promise<void> {
-  await page.evaluate(() => (window as any).app.commands.executeCommandById('duet:new-chat'));
+  await page.evaluate(() => (window as any).app.commands.executeCommandById('duet:new-conversation-claude'));
   await page.waitForSelector('.duet-composer textarea', { timeout: 15_000 });
   await send('Read [[Reading list]] and suggest three books that go well with what I am reading now. One line each on why.');
   await idle();

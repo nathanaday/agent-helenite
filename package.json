@@ -1,57 +1,33 @@
 {
   "name": "obsidian-duet",
   "version": "0.4.0",
-  "description": "Work with Claude Code or Codex in your Obsidian notes, and drive their sessions from a TypeScript app.",
+  "description": "Work with Claude Code or Codex in your Obsidian notes.",
   "license": "MIT",
   "type": "module",
-  "main": "./lib/index.js",
-  "types": "./lib/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./lib/index.d.ts",
-      "default": "./lib/index.js"
-    }
-  },
-  "files": [
-    "lib",
-    "src",
-    "!src/cli"
-  ],
   "scripts": {
-    "chat": "tsx src/cli/chat.ts",
-    "build:lib": "tsc -p tsconfig.lib.json",
     "typecheck": "tsc --noEmit && tsc --noEmit -p plugin",
     "lint": "npm install --prefix scripts/lint --no-audit --no-fund --silent && npm run --prefix scripts/lint lint",
     "test": "vitest run test/unit",
-    "test:live": "vitest run test/live",
-    "bundle": "node scripts/bundle.mjs",
     "plugin:build": "node scripts/plugin.mjs",
     "plugin:dev": "node scripts/dev-vault.mjs && node scripts/plugin.mjs --vault dev-vault --watch",
     "test:obsidian": "vitest run test/obsidian",
     "screenshots": "tsx scripts/screenshots/capture.ts",
-    "set-version": "node scripts/set-version.mjs",
-    "prepare": "npm run build:lib"
+    "set-version": "node scripts/set-version.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.289",
-    "@modelcontextprotocol/sdk": "^1.32.0",
-    "zod": "^4.6.5"
+    "yami": "https://github.com/nathanaday/yami/releases/download/yami-0.19.0/yami-0.19.0.tgz"
   },
   "devDependencies": {
-    "@cfworker/json-schema": "^4.1.1",
     "@codemirror/language": "^6.12.4",
-    "@codemirror/state": "^6.5.0",
-    "@codemirror/view": "^6.38.6",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
     "@types/node": "^26.6.4",
-    "diff-match-patch-es": "^2.0.1",
     "esbuild": "^0.28.2",
-    "monkey-around": "^3.0.0",
-    "obsidian": "^1.13.1",
+    "obsidian": "^1.14.4",
     "playwright-core": "^1.63.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3",
-    "y-protocols": "^1.0.7",
     "yjs": "^13.6.33"
   }
 }

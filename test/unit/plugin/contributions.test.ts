@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diffOps } from '../../../plugin/src/collab/text-ops.ts';
+import { diffOps } from 'yami/document';
 import { applyChange, type Contributions, mapSpans, reconcile, type Span } from '../../../plugin/src/contributions/spans.ts';
 
 const T1 = '2026-10-06T10:00:00.000Z';

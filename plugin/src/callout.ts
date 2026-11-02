@@ -1,3 +1,5 @@
+import { quote } from 'yami/conversation';
+
 export type ReplyState =
   | { kind: 'working'; text: string }
   | { kind: 'completed'; text: string }
@@ -19,11 +21,6 @@ export function renderCallout(title: string, state: ReplyState): string {
   if (!body) return calloutHeader(title);
   const quoted = quote(body);
   return `${calloutHeader(title)}\n${state.kind === 'working' ? quoted : quoted.replace(/^> $/gm, '>')}`;
-}
-
-/** Prefixes each line with "> ". Blank lines keep the space, so appended text only appends. */
-export function quote(text: string): string {
-  return `> ${text.replace(/\n/g, '\n> ')}`;
 }
 
 function bodyText(state: ReplyState): string {

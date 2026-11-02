@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { Page } from 'playwright-core';
 import { launchObsidian, type ObsidianInstance, openAtEnd } from './harness.ts';
 
 const TIMEOUT = 240_000;
@@ -21,7 +22,7 @@ describe('Duet in Obsidian', () => {
     // The editor and the shared document must never differ.
     const drift = await obsidian.page.evaluate(() => {
       const app = (window as any).app;
-      const hub = app.plugins.plugins.duet?.hub;
+      const hub = app.plugins.plugins.duet?.yami.hub;
       const problems: string[] = [];
       for (const leaf of app.workspace.getLeavesOfType('markdown')) {
         const note = leaf.view.file && hub?.get(leaf.view.file.path);
@@ -39,7 +40,7 @@ describe('Duet in Obsidian', () => {
     await page().waitForFunction(
       () => {
         const plugin = (window as any).app.plugins.plugins.duet;
-        return plugin.mentions.working.length === 0 && plugin.conversations.working.length === 0;
+        return plugin.yami.works.length === 0 && plugin.yami.conversations.working.length === 0;
       },
       undefined,
       { timeout, polling: 250 },
@@ -51,7 +52,7 @@ describe('Duet in Obsidian', () => {
     await openAtEnd(page(), note);
     await page().keyboard.type(line);
     await page().keyboard.press('Enter');
-    await page().waitForFunction(() => (window as any).app.plugins.plugins.duet.mentions.working.length > 0, undefined, { timeout: 10_000 });
+    await page().waitForFunction(() => (window as any).app.plugins.plugins.duet.yami.works.length > 0, undefined, { timeout: 60_000 });
   }
 
   async function shot(name: string) {
@@ -79,8 +80,8 @@ describe('Duet in Obsidian', () => {
 
     it('answers a mention in a callout under the line, with a live cursor', { timeout: TIMEOUT }, async () => {
       await mention('Ideas.md', '@claude Reply with exactly the word: pineapple');
-      await page().waitForSelector('.duet-caret', { timeout: 30_000 });
-      expect(await page().textContent('.duet-caret-flag')).toContain('Claude');
+      await page().waitForSelector('.workspace-leaf.mod-active .yami-caret', { timeout: 30_000 });
+      expect(await page().textContent('.workspace-leaf.mod-active .yami-caret-name')).toBe('claude');
       await idle();
       const text = await obsidian.waitForNote('Ideas.md', () => true);
       expect(text).toMatch(/@claude Reply with exactly the word: pineapple\n> \[!agent\]\+ Claude\n> pineapple\.?\n\n$/i);
@@ -107,7 +108,7 @@ describe('Duet in Obsidian', () => {
       const typed = 'I keep typing this sentence while the agent edits the list above.';
       await mention('Ideas.md', '@claude Rewrite each bullet of the list at the top so it is at most eight words. Then reply with: Done.');
       const typing = page().keyboard.type(typed, { delay: 70 });
-      await page().waitForSelector('.duet-fresh', { timeout: 90_000 });
+      await page().waitForSelector('.workspace-leaf.mod-active .yami-fresh', { timeout: 90_000 });
       await shot('edit');
       await typing;
       await idle();
@@ -124,7 +125,7 @@ describe('Duet in Obsidian', () => {
       const record = await ledger('Ideas.md');
       expect(record.text).toBe(text);
       expect(record.spans.length).toBeGreaterThan(0);
-      expect(record.spans.every((span) => span.agent === 'Claude')).toBe(true);
+      expect(record.spans.every((span) => span.agent === 'claude')).toBe(true);
       const typedAt = text.indexOf(typed);
       expect(record.spans.some((span) => span.from < typedAt + typed.length && span.to > typedAt)).toBe(false);
       expect(record.spans.some((span) => text.slice(span.from, span.to).includes('Done'))).toBe(true);
@@ -141,7 +142,7 @@ describe('Duet in Obsidian', () => {
       await mention('Ideas.md', '@claude Add the line "Reviewed." directly under the "# Ideas" heading. Then reply with: Added.');
       await idle();
       expect(await obsidian.waitForNote('Ideas.md', () => true)).toMatch(/# Ideas\n+Reviewed\./);
-      await page().evaluate(() => (window as any).app.commands.executeCommandById('duet:revert'));
+      await page().evaluate(() => (window as any).app.commands.executeCommandById('duet:yami-revert'));
       const reverted = await obsidian.waitForNote('Ideas.md', (text) => !/# Ideas\n+Reviewed\./.test(text), 5000);
       // The reply stays; only the edit goes away.
       expect(reverted.startsWith(before.slice(0, before.indexOf('- ')))).toBe(true);
@@ -165,7 +166,9 @@ describe('Duet in Obsidian', () => {
     it('stops a reply with the Stop command', { timeout: TIMEOUT }, async () => {
       await mention('Ideas.md', '@claude Write a 600 word essay about lighthouses.');
       await obsidian.waitForNote('Ideas.md', (text) => /lighthouses\.\n> \[!agent\]\+ Claude\n> \S/.test(text), 90_000);
-      await page().evaluate(() => (window as any).app.commands.executeCommandById('duet:stop'));
+      // Yami's status bar shows the mention, and Yami's Stop command stops it.
+      await page().waitForFunction(() => /^claude working in Ideas$/.test(document.querySelector('.yami-status.is-working')?.textContent ?? ''), undefined, { timeout: 10_000 });
+      await page().evaluate(() => (window as any).app.commands.executeCommandById('duet:yami-stop'));
       await idle(15_000);
       expect(await obsidian.waitForNote('Ideas.md', () => true)).toMatch(/> \*Stopped\.\*\n\n$/);
     });
@@ -196,16 +199,19 @@ describe('Duet in Obsidian', () => {
   });
 
   describe('conversation notes', () => {
-    async function newConversation(command = 'duet:new-chat') {
+    // Other conversation notes stay open in tabs behind the active one.
+    const box = '.workspace-leaf.mod-active .yami-composer';
+
+    async function newConversation(command = 'duet:yami-new-conversation-claude') {
       await page().evaluate((id) => (window as any).app.commands.executeCommandById(id), command);
-      await page().waitForSelector('.duet-composer textarea', { timeout: 15_000 });
+      await page().waitForSelector(`${box} textarea.yami-input`, { timeout: 15_000 });
     }
 
     async function send(message: string) {
-      await page().focus('.duet-composer textarea');
+      await page().focus(`${box} textarea.yami-input`);
       await page().keyboard.type(message);
       await page().keyboard.press('Enter');
-      await page().waitForSelector('.duet-composer.is-working', { timeout: 10_000 });
+      await page().waitForSelector(`${box}.is-working`, { timeout: 10_000 });
     }
 
     const activePath = () => page().evaluate(() => (window as any).app.workspace.getActiveFile()?.path as string);
@@ -213,11 +219,13 @@ describe('Duet in Obsidian', () => {
     it('writes the exchange into the note and names the note', { timeout: TIMEOUT }, async () => {
       await newConversation();
       await send('Read [[Ideas]], then reply with the number of bullets in its first list, as a digit only.');
+      // Yami's status bar says which agent works.
+      await page().waitForFunction(() => /^claude working in /.test(document.querySelector('.yami-status.is-working')?.textContent ?? ''), undefined, { timeout: 10_000 });
       await idle();
       const file = await activePath();
-      expect(file).toMatch(/^Conversations\/\d{4}-\d{2}-\d{2} Read Ideas, then reply with the number/);
+      expect(file).toMatch(/^conversations\/\d{4}-\d{2}-\d{2} Read Ideas, then reply with the number/);
       const text = await obsidian.waitForNote(file, () => true);
-      expect(text).toMatch(/^---\nduet: conversation\nagent: claude\n/);
+      expect(text).toMatch(/^---\ntype: conversation\nagent: claude\n/);
       expect(text).toMatch(/\nsession: [0-9a-f-]{36}\n/);
       expect(text).toContain('> [!user]\n> Read [[Ideas]], then reply');
       expect(text).toMatch(/> \[!activity\]- .*Read a file.*\n> - Read \[\[Ideas\]\]/);
@@ -236,8 +244,8 @@ describe('Duet in Obsidian', () => {
         app.workspace.setActiveLeaf(chatLeaf, { focus: true });
       });
       await send('Use your Edit tool to replace the first line of [[Reading list]] with "# Books". Then reply with: Done.');
-      await page().waitForSelector('.duet-composer.has-approval', { timeout: 90_000 });
-      expect(await page().textContent('.duet-approval')).toContain('Claude wants to change a file');
+      await page().waitForSelector(`${box}.has-approval`, { timeout: 90_000 });
+      expect(await page().textContent(`${box} .yami-approval`)).toContain('claude wants to change a file');
       await shot('approval');
       // Type in the open note while the agent waits for approval and then edits it.
       const typed = ' Typed while the agent edits.';
@@ -253,7 +261,7 @@ describe('Duet in Obsidian', () => {
         const app = (window as any).app;
         app.workspace.setActiveLeaf(app.workspace.getLeavesOfType('markdown').find((l: any) => l.view.file?.path === file), { focus: true });
       }, chat);
-      await page().focus('.duet-composer textarea');
+      await page().focus(`${box} textarea.yami-input`);
       await page().keyboard.press('y');
       await idle();
       const list = await obsidian.waitForNote('Reading list.md', () => true);
@@ -266,9 +274,7 @@ describe('Duet in Obsidian', () => {
 
     it('records an edit to a note that is not open', { timeout: TIMEOUT }, async () => {
       await send('Use your Edit tool to replace the first line of [[Welcome]] with "# Hello from the agent". Then reply with: Done.');
-      await page().waitForSelector('.duet-composer.has-approval', { timeout: 90_000 });
-      await page().focus('.duet-composer textarea');
-      await page().keyboard.press('y');
+      await page().click(`${box} .yami-approval button[data-decision="allow"]`, { timeout: 90_000 });
       await idle();
       const welcome = readFileSync(path.join(obsidian.vault, 'Welcome.md'), 'utf8');
       expect(welcome.split('\n')[0]).toBe('# Hello from the agent');
@@ -280,23 +286,33 @@ describe('Duet in Obsidian', () => {
     it('shows the agent\'s questions in the message box and sends the answers', { timeout: TIMEOUT }, async () => {
       const chat = await activePath();
       await send('Make one AskUserQuestion tool call with two questions: first which fruit to add, with the options Apple and Pear; then which color, with the options Red and Green. Then reply with only my two answers in capitals, separated by one space.');
-      await page().waitForSelector('.duet-composer.has-approval .duet-questions', { timeout: 90_000 });
-      expect(await page().textContent('.duet-approval')).toContain('Claude asks you');
-      const visible = () => page().$$eval('.duet-question', (sets) => sets.filter((set) => !(set as HTMLElement).hidden).map((set) => set.textContent));
+      const form = `${box}.has-approval .yami-approval .yami-questions`;
+      const question = `${form} .yami-question:not([hidden])`;
+      const submit = `${form} button[type="submit"]`;
+      await page().waitForSelector(form, { timeout: 90_000 });
+      expect(await page().textContent(`${box} .yami-approval`)).toContain('claude asks you');
       // One question at a time; picking an option moves to the next one.
-      expect(await visible()).toEqual([expect.stringContaining('Pear')]);
-      expect(await page().textContent('.duet-question-progress')).toBe('1 of 2');
-      expect(await page().isDisabled('.duet-questions button[type=submit]')).toBe(true);
+      expect(await page().$$(question)).toHaveLength(1);
+      expect(await page().textContent(question)).toContain('Pear');
+      expect(await page().textContent(`${form} .yami-question-progress`)).toBe('1 of 2');
+      expect(await page().isDisabled(submit)).toBe(true);
+      expect(await page().isHidden(`${form} button[data-action="back"]`)).toBe(true);
       await shot('question');
-      await page().click('.duet-question:not([hidden]) .duet-question-option:has-text("Pear")');
-      await page().waitForFunction(() => document.querySelector('.duet-question-progress')?.textContent === '2 of 2');
-      expect(await visible()).toEqual([expect.stringContaining('Green')]);
-      expect(await page().textContent('.duet-questions button[type=submit]')).toContain('Answer');
+      await page().click(`${question} .yami-question-option:has(.yami-question-label:text-is("Pear"))`);
+      await page().waitForSelector(`${form} .yami-question-progress:text-is("2 of 2")`);
+      expect(await page().textContent(question)).toContain('Green');
+      expect(await page().textContent(submit)).toContain('Answer');
+      // Back shows the first question with its answer kept; Next returns.
+      await page().click(`${form} button[data-action="back"]`);
+      await page().waitForSelector(`${form} .yami-question-progress:text-is("1 of 2")`);
+      expect(await page().isEnabled(submit)).toBe(true);
+      await page().click(submit);
+      await page().waitForSelector(`${form} .yami-question-progress:text-is("2 of 2")`);
       // An answer of the user's own, sent with Enter.
-      await page().click('.duet-question:not([hidden]) .duet-question-other');
+      await page().click(`${question} input.yami-question-other`);
       await page().keyboard.type('Blue');
       await page().keyboard.press('Enter');
-      await page().waitForSelector('.duet-composer:not(.has-approval)', { timeout: 10_000 });
+      await page().waitForSelector(`${box}:not(.has-approval)`, { timeout: 10_000 });
       await idle();
       const text = await obsidian.waitForNote(chat, () => true);
       expect(text).toMatch(/> - Asked you questions\n>\s+- .*→ Pear\n>\s+- .*→ Blue\n/);
@@ -307,14 +323,16 @@ describe('Duet in Obsidian', () => {
       const chat = await activePath();
       await page().evaluate(() => (window as any).app.vault.setConfig('nativeMenus', false));
       await send('Use your Edit tool to replace the first line of [[Ideas]] with "# Ideas, revised". Then use it again to replace that line with "# Ideas, revised twice". Then reply with: Done.');
-      await page().waitForSelector('.duet-composer.has-approval', { timeout: 90_000 });
-      await page().click('.duet-chip:has(.duet-chip-label:text-is("Ask first"))');
+      await page().waitForSelector(`${box}.has-approval`, { timeout: 90_000 });
+      const approval = `${box} button.yami-chip[data-setting="approval"]`;
+      expect(await page().textContent(`${approval} .yami-chip-label`)).toBe('Ask first');
+      await page().click(approval);
       await page().click('.menu .menu-item:has-text("Accept edits")');
       await idle();
-      expect(await page().$('.duet-composer.has-approval')).toBeNull();
+      expect(await page().$(`${box}.has-approval`)).toBeNull();
       expect(readFileSync(path.join(obsidian.vault, 'Ideas.md'), 'utf8').split('\n')[0]).toBe('# Ideas, revised twice');
       expect(await obsidian.waitForNote(chat, () => true)).toContain('\napproval: accept-edits\n');
-      expect(await page().$('.duet-chip-label:text-is("Accept edits")')).not.toBeNull();
+      expect(await page().textContent(`${approval} .yami-chip-label`)).toBe('Accept edits');
     });
 
     it('ends the conversation and keeps the note as a record', { timeout: TIMEOUT }, async () => {
@@ -323,21 +341,21 @@ describe('Duet in Obsidian', () => {
         const app = (window as any).app;
         app.workspace.setActiveLeaf(app.workspace.getLeavesOfType('markdown').find((l: any) => l.view.file?.path === file), { focus: true });
       }, chat);
-      await page().focus('.duet-composer textarea');
+      await page().focus(`${box} textarea.yami-input`);
       await page().keyboard.type('/end');
       await page().keyboard.press('Escape');
       await page().keyboard.press('Enter');
-      await page().waitForSelector('.duet-composer.is-ended', { timeout: 10_000 });
+      await page().waitForSelector(`${box}.is-ended`, { timeout: 10_000 });
       expect(await obsidian.waitForNote(chat, (text) => text.includes('status: ended'), 5000)).toContain('status: ended');
       await shot('ended');
     });
 
     it('talks to Codex in a Codex conversation', { timeout: TIMEOUT }, async () => {
-      await newConversation('duet:new-chat-codex');
+      await newConversation('duet:yami-new-conversation-codex');
       await send('Reply with exactly the word: kiwi');
       await idle();
       const text = await obsidian.waitForNote(await activePath(), () => true);
-      expect(text).toMatch(/^---\nduet: conversation\nagent: codex\n/);
+      expect(text).toMatch(/^---\ntype: conversation\nagent: codex\n/);
       expect(text).toMatch(/\nkiwi\.?\n\n$/i);
     });
 
@@ -356,15 +374,15 @@ describe('Duet in Obsidian', () => {
         return { version: api.version, path, working, turn, after: api.conversationStatus(path), active: app.workspace.getActiveFile()?.path };
       });
       expect(result).toEqual({
-        version: 1,
+        version: 2,
         path: 'Agents/From another plugin.md',
         working: 'working',
-        turn: { path: 'Agents/From another plugin.md', status: 'completed' },
+        turn: { path: 'Agents/From another plugin.md', status: 'completed', text: expect.stringMatching(/plum/i) },
         after: 'active',
         active: 'Agents/From another plugin.md',
       });
       const text = await obsidian.waitForNote(result.path, () => true);
-      expect(text).toMatch(/^---\nduet: conversation\nagent: claude\n/);
+      expect(text).toMatch(/^---\ntype: conversation\nagent: claude\n/);
       expect(text).toContain('> [!user]\n> Reply with exactly the word: plum');
       expect(text).toMatch(/\nplum\.?\n\n$/i);
     });
@@ -372,9 +390,10 @@ describe('Duet in Obsidian', () => {
 
   describe('settings', () => {
     const tags = () => page().evaluate(() => (window as any).app.plugins.plugins.duet.settings.profiles.map((p: { name: string }) => p.name) as string[]);
+    const commands = () => page().evaluate(() => Object.keys((window as any).app.commands.commands).filter((id) => id.startsWith('duet:yami-new-conversation-')).sort());
 
-    it('adds, renames and removes an agent in the settings window', { timeout: TIMEOUT }, async () => {
-      // Obsidian opens its settings in a separate window.
+    /** Opens Duet's settings tab, which Obsidian shows in a separate window, and closes it after `use`. */
+    async function inSettings(use: (win: Page) => Promise<void>) {
       const opened = page().context().waitForEvent('page', { timeout: 10_000 });
       await page().evaluate(() => {
         const setting = (window as any).app.setting;
@@ -383,22 +402,111 @@ describe('Duet in Obsidian', () => {
       });
       const win = await opened;
       try {
+        await use(win);
+      } finally {
+        await page().evaluate(() => (window as any).app.setting.close());
+      }
+    }
+
+    it('adds, renames and removes an agent in the settings window', { timeout: TIMEOUT }, async () => {
+      await inSettings(async (win) => {
         await win.getByText('Add agent', { exact: true }).click();
         await expect.poll(tags).toEqual(['claude', 'codex', 'agent2']);
 
-        // Typing a tag keeps the focus. The heading follows when the field loses it.
+        // Typing a tag keeps the focus, also when the window loses it for a moment. The heading follows when the field loses it.
         const tag = win.locator('.setting-item:has(.setting-item-name:text-is("Tag")) input').nth(2);
         await tag.click();
         await tag.press('Meta+a');
-        await win.keyboard.type('work', { delay: 60 });
+        await win.keyboard.type('wo', { delay: 60 });
+        await expect.poll(tags).toEqual(['claude', 'codex', 'wo']);
+        // A window blur: the field gets 'blur' and stays the active element.
+        await tag.dispatchEvent('blur');
+        await win.keyboard.type('rk', { delay: 60 });
         await expect.poll(tags).toEqual(['claude', 'codex', 'work']);
         await win.keyboard.press('Tab');
         await win.getByText('@work', { exact: true }).waitFor({ timeout: 5000 });
 
         await win.locator('[aria-label="Remove @work"]').click();
         await expect.poll(tags).toEqual(['claude', 'codex']);
+      });
+    });
+
+    it('offers a new agent as a command and a mention tag with no reload', { timeout: TIMEOUT }, async () => {
+      await inSettings(async (win) => {
+        await win.getByText('Add agent', { exact: true }).click();
+        await expect.poll(tags).toEqual(['claude', 'codex', 'agent2']);
+      });
+      expect(await commands()).toEqual(['duet:yami-new-conversation-agent2', 'duet:yami-new-conversation-claude', 'duet:yami-new-conversation-codex']);
+
+      await openAtEnd(page(), 'Welcome.md');
+      await page().keyboard.type('@agent2');
+      await page().waitForSelector('.duet-tag:text-is("@agent2")', { timeout: 5000 });
+      for (let i = 0; i < 7; i++) await page().keyboard.press('Backspace');
+
+      await page().evaluate(async () => {
+        const plugin = (window as any).app.plugins.plugins.duet;
+        plugin.settings.profiles.pop();
+        await plugin.saveSettings();
+      });
+      expect(await commands()).toEqual(['duet:yami-new-conversation-claude', 'duet:yami-new-conversation-codex']);
+    });
+
+    it('says what to do in an open conversation when every agent is removed, and works again when one is added', { timeout: TIMEOUT }, async () => {
+      // Other conversation notes stay open in tabs behind this one.
+      const box = '.workspace-leaf.mod-active .yami-composer';
+      const input = `${box} textarea.yami-input`;
+      const send = `${box} button.yami-send`;
+      const saved = await page().evaluate(() => JSON.stringify((window as any).app.plugins.plugins.duet.settings.profiles));
+      try {
+        await page().evaluate(() => (window as any).app.commands.executeCommandById('duet:yami-new-conversation-claude'));
+        await page().waitForSelector(input, { timeout: 15_000 });
+        await page().focus(input);
+        await page().keyboard.type('Remember the word fig. Reply with exactly: OK');
+        await page().keyboard.press('Enter');
+        await page().waitForSelector(`${box}.is-working`, { timeout: 10_000 });
+        await idle();
+        const chat = await page().evaluate(() => (window as any).app.workspace.getActiveFile().path as string);
+
+        await inSettings(async (win) => {
+          await win.locator('[aria-label="Remove @claude"]').click();
+          await expect.poll(tags).toEqual(['codex']);
+          await win.locator('[aria-label="Remove @claude"]').waitFor({ state: 'detached', timeout: 5000 });
+          await win.locator('[aria-label="Remove @codex"]').click();
+          await expect.poll(tags).toEqual([]);
+        });
+        await page().waitForSelector(`${box}.is-unavailable`, { timeout: 5000 });
+        expect(await page().textContent(`${box} .yami-unavailable`)).toBe('Duet has no agents. Add one in its settings.');
+        expect(await commands()).toEqual([]);
+        const question = 'Which word did I ask you to remember? Reply with the word only.';
+        await page().focus(input);
+        await page().keyboard.type(question);
+        await page().keyboard.press('Enter');
+        await page().waitForTimeout(500);
+        expect(await page().inputValue(input)).toBe(question);
+        expect(await page().isDisabled(send)).toBe(true);
+        expect(await page().$(`${box}.is-working`)).toBeNull();
+        expect(await obsidian.waitForNote(chat, () => true)).not.toContain(question);
+        await shot('no-agents');
+
+        await inSettings(async (win) => {
+          await win.getByText('Add agent', { exact: true }).click();
+          await expect.poll(tags).toEqual(['agent2']);
+        });
+        await page().waitForSelector(`${box}:not(.is-unavailable)`, { timeout: 5000 });
+        expect(await page().isDisabled(send)).toBe(false);
+        expect(await commands()).toEqual(['duet:yami-new-conversation-agent2']);
+        await page().focus(input);
+        await page().keyboard.press('Enter');
+        await page().waitForSelector(`${box}.is-working`, { timeout: 10_000 });
+        await idle();
+        // The new agent continues the note's harness session, so it knows the word.
+        expect(await obsidian.waitForNote(chat, () => true)).toMatch(/\nfig\.?\n\n$/i);
       } finally {
-        await page().evaluate(() => (window as any).app.setting.close());
+        await page().evaluate(async (profiles) => {
+          const plugin = (window as any).app.plugins.plugins.duet;
+          plugin.settings.profiles = JSON.parse(profiles);
+          await plugin.saveSettings();
+        }, saved);
       }
     });
   });

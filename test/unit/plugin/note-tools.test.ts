@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyOps, diffOps } from '../../../plugin/src/collab/text-ops.ts';
+import { applyOps, diffOps } from 'yami/document';
 import { agentView, PLACEHOLDER, viewOpsToNote } from '../../../plugin/src/note-tools.ts';
 
 const note = '# Plan\n\nFirst draft, rough.\n@claude clean this up\n> [!agent]+ Claude\n> Working\n\nLast line.';

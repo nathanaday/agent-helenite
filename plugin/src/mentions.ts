@@ -1,15 +1,10 @@
-import { type App, Notice, type TFile } from 'obsidian';
+import { Notice, type TFile } from 'obsidian';
 import type * as Y from 'yjs';
-import type { AgentEvent, AgentSession } from '../../src/index.ts';
-import { activity, Presence, startAgent } from './agent-session.ts';
+import type { AgentEvent, AgentSession } from 'yami/agent';
+import { activity, type CollabHub, EditorBinding, LiveRegion, type NoteAgent, type NoteSessions, type NoteSessionSetup, type ObsidianYami, Presence, type SessionIds, type SharedNote } from 'yami/obsidian';
 import { calloutHeader, isCalloutHeader, renderCallout, type ReplyState } from './callout.ts';
-import { EditorBinding } from './collab/binding.ts';
-import type { CollabHub } from './collab/hub.ts';
-import { LiveRegion } from './collab/region.ts';
-import type { SharedNote } from './collab/shared-note.ts';
 import type { TriggeredMention } from './enter-trigger.ts';
 import { NoteTools, PLACEHOLDER } from './note-tools.ts';
-import type { PermissionPrompts } from './permission-modal.ts';
 import { type AgentProfile, displayName } from './settings.ts';
 
 const INSTRUCTIONS = `You are running inside Obsidian, the note-taking app, through the Duet plugin. Your working directory is the root of the user's vault.
@@ -27,9 +22,6 @@ How to answer:
 - Answer directly. Leave out preambles, sign-offs and offers of more help. Keep the reply short unless the user asks for more.
 - Change the note only when the request asks for it. For a broad rewrite, such as "clean this up", keep the user's meaning, facts, links and structure unless asked otherwise. Then say in one sentence what you changed.
 - Wait for each tool to finish. Do not start background work.`;
-
-/** Session ids by note path, then by agent name. The plugin saves this map with its settings. */
-export type SessionIndex = Record<string, Record<string, string>>;
 
 export interface Mention extends TriggeredMention {
   profile: AgentProfile;
@@ -49,49 +41,71 @@ interface Reply {
   wrap?: (callout: string) => string;
 }
 
+/** The mention agent of one harness session in one note: its cursors, its note tools, and its replies. */
 class LiveSession {
   readonly replies: Reply[] = [];
   current: Reply | undefined;
-  idleTimer: number | undefined;
+  session!: AgentSession;
+  readonly presence: Presence;
+  readonly tools: NoteTools;
 
   constructor(
-    readonly session: AgentSession,
-    readonly profile: AgentProfile,
+    public profile: AgentProfile,
     readonly file: TFile,
-    readonly presence: Presence,
-    readonly tools: NoteTools,
-  ) {}
+    hub: CollabHub,
+    animate: () => boolean,
+  ) {
+    this.presence = new Presence(() => ({ name: this.profile.name, color: this.profile.color }), animate);
+    this.tools = new NoteTools({
+      note: () => hub.acquire(file, this.tools),
+      peer: (note) => this.presence.peer(note),
+      hidden: (note) => hiddenRange(note, this.current),
+    });
+  }
 
   get busy(): boolean {
     return this.current !== undefined || this.replies.length > 0;
   }
 }
 
+export interface MentionOptions {
+  ids: SessionIds;
+  save(ids: SessionIds): Promise<void>;
+  profile(name: string): AgentProfile | undefined;
+}
+
 /**
- * Answers mentions. Each note and agent pair has one conversation. The agent reads the note, may change it
- * through the note tools, and writes its reply into a callout under the request, with a live cursor.
- * Keys are the agent name and the note path, joined by a NUL character.
+ * Answers mentions. Each note and agent pair has one harness session, from Yami's note sessions. The agent
+ * reads the note, may change it through the note tools, and writes its reply into a callout under the
+ * request, with a live cursor.
  */
 export class MentionAgents {
-  private readonly live = new Map<string, Promise<LiveSession>>();
-  private readonly settled = new Map<string, LiveSession>();
+  private readonly hub: CollabHub;
+  private readonly notes: NoteSessions<LiveSession>;
 
   constructor(
-    private readonly app: App,
-    private readonly hub: CollabHub,
-    private readonly sessions: SessionIndex,
-    private readonly prompts: PermissionPrompts,
-    private readonly options: {
-      idleMinutes: () => number;
-      animate: () => boolean;
-      save: () => Promise<void>;
-      onActivity: () => void;
-    },
-  ) {}
+    private readonly yami: ObsidianYami,
+    private readonly options: MentionOptions,
+  ) {
+    this.hub = yami.hub;
+    this.notes = yami.noteSessions({ ids: options.ids, save: (ids) => options.save(ids), setup: (note) => this.setup(note) });
+  }
 
-  /** Agents that are working now, with their notes. */
-  get working(): { name: string; file: TFile }[] {
-    return [...this.settled.values()].filter((live) => live.busy).map((live) => ({ name: displayName(live.profile), file: live.file }));
+  private setup({ file, agent }: NoteAgent): NoteSessionSetup<LiveSession> {
+    const profile = this.options.profile(agent);
+    if (!profile) throw new Error(`Duet has no agent named ${agent}.`);
+    const live = new LiveSession(profile, file, this.hub, this.yami.animate);
+    return {
+      options: { instructions: INSTRUCTIONS, access: 'read-only', tools: live.tools.tools, skills: [] },
+      state: live,
+      started: (session) => {
+        live.session = session;
+        session.on((event) => {
+          this.handle(live, event);
+          if (event.type === 'closed') this.release(live);
+        });
+      },
+    };
   }
 
   async ask(mention: Mention): Promise<void> {
@@ -101,8 +115,9 @@ export class MentionAgents {
     const reply: Reply = { title: displayName(profile), note: undefined, region: undefined, streaming: '', message: '', line: undefined };
     let live: LiveSession;
     try {
-      const [note, session] = await Promise.all([this.hub.acquire(file, reply), this.liveSession(file, profile)]);
-      live = session;
+      const [note, started] = await Promise.all([this.hub.acquire(file, reply), this.notes.session(file.path, profile.name)]);
+      live = started.state;
+      live.profile = profile;
       reply.note = note;
       if (tracked) binding!.untrack(tracked);
       const lineFrom = tracked?.from ?? mention.lineFrom;
@@ -119,9 +134,7 @@ export class MentionAgents {
       if (reply.note) this.hub.release(reply.note, reply);
       return;
     }
-    window.clearTimeout(live.idleTimer);
     live.replies.push(reply);
-    this.options.onActivity();
     const text = await live.tools.show((note) => hiddenRange(note, reply));
     const prompt = [
       `Note: ${file.path} (line ${mention.line + 1})`,
@@ -137,67 +150,9 @@ export class MentionAgents {
     });
   }
 
-  /** Stops the agents that are working in a note. */
-  async interrupt(file: TFile): Promise<number> {
-    let stopped = 0;
-    for (const live of this.settled.values()) {
-      if (live.file === file && live.current) {
-        stopped++;
-        await live.session.interrupt();
-      }
-    }
-    return stopped;
-  }
-
-  /** Reverts the changes that agents made to a note in their last turn. */
-  revert(note: SharedNote): boolean {
-    if (!note.agentUndo.canUndo()) return false;
-    note.agentUndo.undo();
-    return true;
-  }
-
   /** Ends the conversations in a note. The next mention starts new ones. */
-  async forget(file: TFile): Promise<void> {
-    for (const [key, live] of [...this.settled]) if (live.file === file) await this.closeKey(key);
-    delete this.sessions[file.path];
-    await this.options.save();
-  }
-
-  /** Moves stored sessions to a note's new path. Live sessions follow the file object. */
-  async rename(file: TFile, oldPath: string): Promise<void> {
-    if (this.sessions[oldPath]) {
-      this.sessions[file.path] = this.sessions[oldPath]!;
-      delete this.sessions[oldPath];
-      await this.options.save();
-    }
-    for (const map of [this.live, this.settled] as Map<string, unknown>[]) {
-      for (const [key, value] of [...map]) {
-        const [name, path] = key.split('\u0000');
-        if (path !== oldPath) continue;
-        map.delete(key);
-        map.set(`${name}\u0000${file.path}`, value);
-      }
-    }
-  }
-
-  /** Closes agents that are not working, so they restart with new settings. */
-  async closeIdle(): Promise<void> {
-    for (const [key, live] of [...this.settled]) if (!live.busy) await this.closeKey(key);
-  }
-
-  async closeAll(): Promise<void> {
-    await Promise.all([...this.live.keys()].map((key) => this.closeKey(key)));
-  }
-
-  private async closeKey(key: string): Promise<void> {
-    const pending = this.live.get(key);
-    this.live.delete(key);
-    this.settled.delete(key);
-    const live = await pending?.catch(() => undefined);
-    if (!live) return;
-    window.clearTimeout(live.idleTimer);
-    this.release(live);
-    await live.session.close();
+  forget(file: TFile): Promise<void> {
+    return this.notes.forget(file.path);
   }
 
   /** Removes the agent's cursors and lets go of the note that its tools shared. */
@@ -205,51 +160,6 @@ export class MentionAgents {
     live.presence.clear();
     const note = this.hub.get(live.file.path);
     if (note) this.hub.release(note, live.tools);
-  }
-
-  private liveSession(file: TFile, profile: AgentProfile): Promise<LiveSession> {
-    const key = `${profile.name}\u0000${file.path}`;
-    const existing = this.live.get(key);
-    if (existing) return existing;
-    const starting = this.start(file, profile, key);
-    this.live.set(key, starting);
-    starting.then(
-      (live) => this.settled.set(key, live),
-      () => this.live.delete(key),
-    );
-    return starting;
-  }
-
-  private async start(file: TFile, profile: AgentProfile, key: string): Promise<LiveSession> {
-    const presence = new Presence(profile, this.options.animate);
-    let current: () => Reply | undefined = () => undefined;
-    const tools: NoteTools = new NoteTools({
-      note: () => this.hub.acquire(file, tools),
-      peer: (note) => presence.peer(note),
-      hidden: (note) => hiddenRange(note, current()),
-    });
-    const session = await startAgent(this.app, {
-      profile,
-      instructions: INSTRUCTIONS,
-      access: 'read-only',
-      resume: this.sessions[file.path]?.[profile.name],
-      tools: tools.tools,
-      onPermission: (request) => this.prompts.ask(request, { agent: displayName(profile), notePath: file.path }),
-    });
-    (this.sessions[file.path] ??= {})[profile.name] = session.id;
-    await this.options.save();
-
-    const live = new LiveSession(session, profile, file, presence, tools);
-    current = () => live.current;
-    session.on((event) => this.handle(live, event));
-    session.on((event) => {
-      if (event.type === 'closed' && this.settled.get(key) === live) {
-        this.live.delete(key);
-        this.settled.delete(key);
-        this.release(live);
-      }
-    });
-    return live;
   }
 
   private handle(live: LiveSession, event: AgentEvent): void {
@@ -291,13 +201,7 @@ export class MentionAgents {
                 : { kind: 'failed', text: partial, error: error ?? 'The agent stopped with an error.' },
           );
         }
-        if (!live.busy) {
-          live.presence.setStatus(undefined);
-          live.idleTimer = window.setTimeout(() => {
-            for (const [key, candidate] of this.settled) if (candidate === live) void this.closeKey(key);
-          }, this.options.idleMinutes() * 60_000);
-        }
-        this.options.onActivity();
+        if (!live.busy) live.presence.setStatus(undefined);
         break;
       }
       case 'closed':
@@ -305,7 +209,6 @@ export class MentionAgents {
         for (const waiting of live.replies.splice(0)) {
           void this.finish(live, waiting, { kind: 'failed', text: '', error: event.error ?? 'The agent closed.' });
         }
-        this.options.onActivity();
         break;
     }
   }
@@ -321,10 +224,9 @@ export class MentionAgents {
       }, 1200);
       this.hub.release(reply.note, reply);
     }
-    this.options.onActivity();
   }
 
-  /** The agent started a turn on its own, for example after a background task. Its reply goes to the end of the note. */
+  /** The agent started a turn on its own. Its reply goes to the end of the note. */
   private async followUp(live: LiveSession): Promise<void> {
     const title = `${displayName(live.profile)} (follow-up)`;
     const reply: Reply = { title, note: undefined, region: undefined, streaming: '', message: '', line: undefined };
@@ -337,7 +239,6 @@ export class MentionAgents {
     reply.wrap = (callout) => `${separator}${callout}\n`;
     reply.region = new LiveRegion(live.presence.peer(note), end, end);
     this.render(reply, { kind: 'working', text: '' });
-    this.options.onActivity();
   }
 
   private render(reply: Reply, state: ReplyState): void {

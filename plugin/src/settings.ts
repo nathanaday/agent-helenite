@@ -1,5 +1,6 @@
 import { type App, PluginSettingTab, type SettingDefinitionGroup, type SettingDefinitionItem } from 'obsidian';
-import type { ApprovalSetting, Harness } from '../../src/index.ts';
+import type { ApprovalSetting, Harness } from 'yami/agent';
+import { HARNESS_COLORS } from 'yami/obsidian';
 import type DuetPlugin from './main.ts';
 
 export interface AgentProfile {
@@ -33,15 +34,13 @@ export interface DuetSettings {
   lens: boolean;
 }
 
-export const AGENT_COLORS: Record<Harness, string> = { claude: '#d97757', codex: '#4f8cf7' };
-
 export const DEFAULT_SETTINGS: DuetSettings = {
   profiles: [
-    { name: 'claude', harness: 'claude', executablePath: '', env: '', model: '', effort: '', approval: 'ask', userTools: false, color: AGENT_COLORS.claude },
-    { name: 'codex', harness: 'codex', executablePath: '', env: '', model: '', effort: '', approval: 'ask', userTools: false, color: AGENT_COLORS.codex },
+    { name: 'claude', harness: 'claude', executablePath: '', env: '', model: '', effort: '', approval: 'ask', userTools: false, color: HARNESS_COLORS.claude },
+    { name: 'codex', harness: 'codex', executablePath: '', env: '', model: '', effort: '', approval: 'ask', userTools: false, color: HARNESS_COLORS.codex },
   ],
   idleMinutes: 15,
-  conversationFolder: 'Conversations',
+  conversationFolder: 'conversations',
   animate: true,
   lens: false,
 };
@@ -52,7 +51,7 @@ export function upgradeSettings(saved: Partial<DuetSettings> | undefined): DuetS
   settings.profiles = settings.profiles.map((profile) => ({
     ...DEFAULT_SETTINGS.profiles[0]!,
     ...profile,
-    color: profile.color || AGENT_COLORS[profile.harness],
+    color: profile.color || HARNESS_COLORS[profile.harness],
   }));
   return settings;
 }
@@ -110,7 +109,7 @@ export class DuetSettingTab extends PluginSettingTab {
       {
         name: 'Conversation folder',
         desc: 'Where new conversation notes go.',
-        control: { type: 'folder', key: 'conversationFolder', placeholder: 'Conversations', includeRoot: true },
+        control: { type: 'folder', key: 'conversationFolder', placeholder: 'conversations', includeRoot: true },
       },
       {
         name: 'Show agents typing',
@@ -195,14 +194,14 @@ export class DuetSettingTab extends PluginSettingTab {
     }
     if (this.waitingForBlur.has(field)) return;
     this.waitingForBlur.add(field);
-    field.addEventListener(
-      'blur',
-      () => {
-        this.waitingForBlur.delete(field);
-        this.update();
-      },
-      { once: true },
-    );
+    const blurred = () => {
+      // The window lost the focus. The field keeps it for when the window gets it back.
+      if (field.doc.activeElement === field) return;
+      field.removeEventListener('blur', blurred);
+      this.waitingForBlur.delete(field);
+      this.update();
+    };
+    field.addEventListener('blur', blurred);
   }
 
   private agentGroup(profile: AgentProfile, index: number): SettingDefinitionGroup {
@@ -214,7 +213,7 @@ export class DuetSettingTab extends PluginSettingTab {
           button
             .setIcon('trash')
             .setTooltip(`Remove @${profile.name}`)
-            .onClick(() => void this.removeAgent(index)),
+            .onClick(() => void this.removeAgent(profile)),
       ],
       items: [
         {
@@ -276,8 +275,10 @@ export class DuetSettingTab extends PluginSettingTab {
     this.update();
   }
 
-  private async removeAgent(index: number): Promise<void> {
-    this.plugin.settings.profiles.splice(index, 1);
+  /** By the profile, not its index: Obsidian keeps a group's buttons when the group above it goes. */
+  private async removeAgent(profile: AgentProfile): Promise<void> {
+    const { profiles } = this.plugin.settings;
+    if (profiles.includes(profile)) profiles.splice(profiles.indexOf(profile), 1);
     await this.plugin.saveSettings();
     this.update();
   }
